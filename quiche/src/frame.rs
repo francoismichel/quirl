@@ -186,7 +186,7 @@ pub enum Frame {
 
 impl Frame {
     pub fn from_bytes(
-        b: &mut octets::Octets, pkt: packet::Type, decoder: &Decoder
+        b: &mut octets::Octets, pkt: packet::Type, nc_decoder: &Decoder
     ) -> Result<Frame> {
         let frame_type = b.get_varint()?;
 
@@ -313,7 +313,7 @@ impl Frame {
             0x30 | 0x31 => parse_datagram_frame(frame_type, b)?,
 
             0x32 => {
-                let (read, repair_symbol) = decoder.read_repair_symbol(b.to_vec().as_slice())?;
+                let (read, repair_symbol) = nc_decoder.read_repair_symbol(b.to_vec().as_slice())?;
                 b.skip(read)?;
                 Frame::Repair {
                     repair_symbol,
