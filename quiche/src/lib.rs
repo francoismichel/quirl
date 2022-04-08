@@ -415,7 +415,7 @@ use std::str::FromStr;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::time::Instant;
-use networkcoding::{Decoder, Encoder, source_symbol_metadata_from_u64, source_symbol_metadata_to_u64, SourceSymbol};
+use networkcoding::{source_symbol_metadata_from_u64, source_symbol_metadata_to_u64, SourceSymbol};
 use networkcoding::rlc::decoder::RLCDecoder;
 use networkcoding::rlc::encoder::RLCEncoder;
 
@@ -1462,6 +1462,7 @@ pub struct Connection {
     fec_encoder: networkcoding::Encoder,
     fec_decoder: networkcoding::Decoder,
     emit_fec: bool,
+    fec_scheduler: fec::fec_scheduler::FECScheduler,
 
     /// Whether to emit DATAGRAM frames in the next packet.
     emit_dgram: bool,
@@ -1907,9 +1908,9 @@ impl Connection {
 
             dcid_seq_to_abandon: VecDeque::new(),
             
-            fec_encoder: Encoder::RLC(RLCEncoder::new(5000, 1300, 42)),
-            fec_decoder: Decoder::RLC(RLCDecoder::new(5000, 1300)),
-
+            fec_encoder: networkcoding::Encoder::RLC(RLCEncoder::new(5000, 1300, 42)),
+            fec_decoder: networkcoding::Decoder::RLC(RLCDecoder::new(5000, 1300)),
+            fec_scheduler: fec::fec_scheduler::new_background_scheduler(),
 
             emit_fec: config.fec,
         };
@@ -3079,6 +3080,10 @@ impl Connection {
                         self.dcid_seq_to_abandon.push_back(dcid_seq_num);
                     },
 
+                    frame::Frame::Repair { .. } => {
+                        self.fec_scheduler.acked_repair_symbol();
+                    },
+
                     _ => (),
                 }
             }
@@ -3604,6 +3609,10 @@ impl Connection {
                                 pns.ack_elicited = true;
                             })
                             .ok();
+                    },
+
+                    frame::Frame::Repair { .. } => {
+                        self.fec_scheduler.lost_repair_symbol();
                     },
 
                     _ => (),
@@ -4336,6 +4345,20 @@ impl Connection {
 
             if push_frame_to_pkt!(b, frames, frame, left) {
                 in_flight = true;
+            }
+        }
+
+        // Create REPAIR frame.else
+        if pkt_type == packet::Type::Short
+            && self.fec_scheduler.should_send_repair(self, self.paths.get(send_pid)?, self.fec_encoder.symbol_size())
+            && self.fec_encoder.can_send_repair_symbols() {
+            let frame = frame::Frame::Repair {
+                repair_symbol: self.fec_encoder.generate_and_serialize_repair_symbol()?,
+            };
+            if push_frame_to_pkt!(b, frames, frame, left) {
+                in_flight = true;
+                self.fec_scheduler.sent_repair_symbol();
+                ack_eliciting = true;
             }
         }
 
@@ -15449,6 +15472,7 @@ mod tests {
         assert_eq!(pipe.client.retired_scid_next(), Some(scid));
         assert_eq!(pipe.client.retired_scid_next(), None);
     }
+    
 
     #[test]
     fn sending_duplicate_scids() {
@@ -17283,3 +17307,4 @@ mod ranges;
 mod recovery;
 mod stream;
 mod tls;
+mod fec;
