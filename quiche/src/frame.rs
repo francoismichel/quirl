@@ -909,6 +909,14 @@ impl Frame {
                 Frame::PathResponse { .. }
         )
     }
+    
+    pub fn fec_protected(&self) -> bool {
+        // Any other frame is fec-protected (note the `!`).
+        self.ack_eliciting() && !matches!(
+            self,
+            Frame::Repair { .. },
+        )
+    }
 
     #[cfg(feature = "qlog")]
     pub fn to_qlog(&self) -> QuicFrame {
@@ -1617,7 +1625,13 @@ fn parse_datagram_frame(ty: u64, b: &mut octets::Octets) -> Result<Frame> {
 
 #[cfg(test)]
 mod tests {
+    use networkcoding::rlc::decoder::RLCDecoder;
     use super::*;
+
+    fn get_decoder() -> Decoder {
+        Decoder::RLC(RLCDecoder::new(1300, 8000))
+    }
+    
 
     #[test]
     fn padding() {
