@@ -23,6 +23,8 @@ impl BackgroundFECScheduler {
         } else {
             cwnd/2
         };
+        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} max_repair_data={}",
+                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, max_repair_data);
         !dgrams_to_emit && !stream_to_emit && (self.n_repair_in_flight as usize *symbol_size) < max_repair_data
     }
 
