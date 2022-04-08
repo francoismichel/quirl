@@ -25,6 +25,7 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use std::convert::TryInto;
+use networkcoding::{Decoder, RepairSymbol};
 
 use crate::Error;
 use crate::Result;
@@ -177,11 +178,15 @@ pub enum Frame {
     DatagramHeader {
         length: usize,
     },
+
+    Repair {
+        repair_symbol: RepairSymbol,
+    },
 }
 
 impl Frame {
     pub fn from_bytes(
-        b: &mut octets::Octets, pkt: packet::Type,
+        b: &mut octets::Octets, pkt: packet::Type, decoder: &Decoder
     ) -> Result<Frame> {
         let frame_type = b.get_varint()?;
 
@@ -306,6 +311,14 @@ impl Frame {
             0x1e => Frame::HandshakeDone,
 
             0x30 | 0x31 => parse_datagram_frame(frame_type, b)?,
+
+            0x32 => {
+                let (read, repair_symbol) = decoder.read_repair_symbol(b.to_vec().as_slice())?;
+                b.skip(read)?;
+                Frame::Repair {
+                    repair_symbol,
+                }
+            },
 
             _ => return Err(Error::InvalidFrame),
         };
@@ -569,6 +582,10 @@ impl Frame {
             },
 
             Frame::DatagramHeader { .. } => (),
+            Frame::Repair { repair_symbol } => {
+                b.put_varint(0x32)?;
+                b.put_bytes(repair_symbol.get())?;
+            }
         }
 
         Ok(before - b.cap())
@@ -784,6 +801,10 @@ impl Frame {
                 2 + // length, always encode as 2-byte varint
                 *length // data
             },
+
+            Frame::Repair { repair_symbol } => {
+                repair_symbol.wire_len()
+            },
         }
     }
 
@@ -996,6 +1017,10 @@ impl Frame {
                 length: *length as u64,
                 raw: None,
             },
+
+            Frame::Repair { .. } => QuicFrame::Unknown {
+                raw_frame_type: 0x32,
+            },
         }
     }
 }
@@ -1162,6 +1187,10 @@ impl std::fmt::Debug for Frame {
 
             Frame::DatagramHeader { length } => {
                 write!(f, "DATAGRAM len={length}")?;
+            },
+
+            Frame::Repair { repair_symbol } => {
+                write!(f, "REPAIR len={}", repair_symbol.wire_len())?;
             },
         }
 
