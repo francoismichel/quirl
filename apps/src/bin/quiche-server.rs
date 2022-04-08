@@ -129,6 +129,7 @@ fn main() {
     config.set_max_stream_window(conn_args.max_stream_window);
 
     config.enable_pacing(pacing);
+    config.send_fec(conn_args.send_fec);
 
     let mut keylog = None;
 
