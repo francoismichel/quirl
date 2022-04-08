@@ -1657,16 +1657,16 @@ mod tests {
         assert_eq!(wire_len, 128);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_ok());
     }
 
     #[test]
@@ -1684,16 +1684,16 @@ mod tests {
         assert_eq!(&d[..wire_len], [0x01_u8]);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_ok());
     }
 
     #[test]
@@ -1720,16 +1720,16 @@ mod tests {
         assert_eq!(wire_len, 17);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_ok());
     }
 
     #[test]
@@ -1762,16 +1762,16 @@ mod tests {
         assert_eq!(wire_len, 23);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_ok());
     }
 
     #[test]
@@ -1792,16 +1792,16 @@ mod tests {
         assert_eq!(wire_len, 13);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -1821,16 +1821,16 @@ mod tests {
         assert_eq!(wire_len, 7);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -1851,16 +1851,16 @@ mod tests {
         assert_eq!(wire_len, 19);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_ok());
     }
 
     #[test]
@@ -1879,16 +1879,16 @@ mod tests {
         assert_eq!(wire_len, 17);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -1910,16 +1910,16 @@ mod tests {
         assert_eq!(wire_len, 20);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -1942,7 +1942,7 @@ mod tests {
 
         let mut b = octets::Octets::with_slice(&d);
         assert_eq!(
-            Frame::from_bytes(&mut b, packet::Type::Short),
+            Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()),
             Err(Error::InvalidFrame)
         );
     }
@@ -1961,16 +1961,16 @@ mod tests {
         assert_eq!(wire_len, 5);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -1990,16 +1990,16 @@ mod tests {
         assert_eq!(wire_len, 7);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2016,16 +2016,16 @@ mod tests {
         assert_eq!(wire_len, 5);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2042,16 +2042,16 @@ mod tests {
         assert_eq!(wire_len, 5);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2068,16 +2068,16 @@ mod tests {
         assert_eq!(wire_len, 5);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2097,16 +2097,16 @@ mod tests {
         assert_eq!(wire_len, 7);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2123,16 +2123,16 @@ mod tests {
         assert_eq!(wire_len, 5);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2149,16 +2149,16 @@ mod tests {
         assert_eq!(wire_len, 5);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2180,16 +2180,16 @@ mod tests {
         assert_eq!(wire_len, 41);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2206,16 +2206,16 @@ mod tests {
         assert_eq!(wire_len, 5);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2234,16 +2234,16 @@ mod tests {
         assert_eq!(wire_len, 9);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2262,16 +2262,16 @@ mod tests {
         assert_eq!(wire_len, 9);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2292,16 +2292,16 @@ mod tests {
         assert_eq!(wire_len, 22);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_ok());
     }
 
     #[test]
@@ -2321,16 +2321,16 @@ mod tests {
         assert_eq!(wire_len, 18);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2347,16 +2347,16 @@ mod tests {
         assert_eq!(wire_len, 1);
 
         let mut b = octets::Octets::with_slice(&d);
-        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short), Ok(frame));
+        assert_eq!(Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()), Ok(frame));
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
     }
 
     #[test]
@@ -2376,18 +2376,18 @@ mod tests {
 
         let mut b = octets::Octets::with_slice(&mut d);
         assert_eq!(
-            Frame::from_bytes(&mut b, packet::Type::Short),
+            Frame::from_bytes(&mut b, packet::Type::Short, &get_decoder()),
             Ok(frame.clone())
         );
 
         let mut b = octets::Octets::with_slice(&mut d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Initial).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Initial, &get_decoder()).is_err());
 
         let mut b = octets::Octets::with_slice(&mut d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT).is_ok());
+        assert!(Frame::from_bytes(&mut b, packet::Type::ZeroRTT, &get_decoder()).is_ok());
 
         let mut b = octets::Octets::with_slice(&mut d);
-        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake).is_err());
+        assert!(Frame::from_bytes(&mut b, packet::Type::Handshake, &get_decoder()).is_err());
 
         let frame_data = match &frame {
             Frame::Datagram { data } => data.clone(),
