@@ -569,10 +569,16 @@ pub enum Error {
     /// Error in key update.
     KeyUpdate,
     /// Error in FEC decoder
-    FECDecoderError,
+    FECDecoderError(u64),
 
     /// Error in FEC encoder
-    FECEncoderError,
+    FECEncoderError(u64),
+
+    /// Generated or received a wrong symbol ID
+    BadSymbolID,
+
+    /// Error during the creation of a source symbol (e.g. could not put correctly the frames to protect in the symbol)
+    SourceSymbolCreationError,
 }
 
 impl Error {
@@ -636,13 +642,13 @@ impl std::convert::From<octets::BufferTooShortError> for Error {
 
 impl std::convert::From<networkcoding::DecoderError> for Error {
     fn from(_err: networkcoding::DecoderError) -> Self {
-        Error::FECDecoderError
+        Error::FECDecoderError(_err.to_u64())
     }
 }
 
 impl std::convert::From<networkcoding::EncoderError> for Error {
     fn from(_err: networkcoding::EncoderError) -> Self {
-        Error::FECEncoderError
+        Error::FECEncoderError(_err.to_u64())
     }
 }
 
@@ -1255,6 +1261,11 @@ impl Config {
     /// The default value is `false`.
     pub fn set_disable_dcid_reuse(&mut self, v: bool) {
         self.disable_dcid_reuse = v;
+    }
+
+    /// decides whether FEC should be sent to protect data
+    pub fn send_fec(&mut self, v: bool) {
+        self.fec = v;
     }
 }
 
@@ -1890,8 +1901,8 @@ impl Connection {
 
             newly_acked: Vec::new(),
             
-            fec_encoder: networkcoding::Encoder::RLC(RLCEncoder::new(5000, 1300, 42)),
-            fec_decoder: networkcoding::Decoder::RLC(RLCDecoder::new(5000, 1300)),
+            fec_encoder: networkcoding::Encoder::RLC(RLCEncoder::new(1280, 5000, 42)),
+            fec_decoder: networkcoding::Decoder::RLC(RLCDecoder::new(1280, 5000)),
             fec_scheduler: fec::fec_scheduler::new_background_scheduler(),
 
 
@@ -2771,7 +2782,7 @@ impl Connection {
             let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &self.fec_decoder)?;
             let offset_after_frame_processing = payload.off();
 
-            if frame.ack_eliciting() {
+            if frame.fec_protected() {
                 source_symbol_data.extend_from_slice(&payload.buf()[offset_before_frame_processing..offset_after_frame_processing]);
             }
 
@@ -2794,6 +2805,14 @@ impl Connection {
             }
         }
 
+        let current_len = source_symbol_data.len();
+        let symbol_size = self.fec_encoder.symbol_size();
+        if current_len < symbol_size {
+            source_symbol_data.resize(symbol_size, 0);
+            // put the padding in front
+            source_symbol_data.rotate_right(symbol_size - current_len);
+        }
+
         let decoded_symbols = self.fec_decoder.receive_source_symbol(SourceSymbol::new(
                                                         source_symbol_metadata_from_u64(pn),
                                                                 source_symbol_data
@@ -2801,6 +2820,7 @@ impl Connection {
                                                 )?;
 
         for decoded_symbol in decoded_symbols {
+            trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
             self.process_frames_of_source_symbol(decoded_symbol, now, epoch, &hdr, recv_pid)?;
         }
 
@@ -4012,14 +4032,17 @@ impl Connection {
             do_dgram = true;
         }
 
-        if self.emit_fec && (do_dgram || do_stream) {
+        if self.emit_fec && (do_dgram || stream_to_emit) {
             // add PADDING frames to contain the repair frame afterwards
-            let n_padding_for_fec = 32;
+            let n_padding_for_fec = std::cmp::min(32, left);
 
             let frame = frame::Frame::Padding { len: n_padding_for_fec };
 
+            trace!("add {} bytes of padding for FEC", n_padding_for_fec);
             if push_frame_to_pkt!(b, frames, frame, left) {
                 in_flight = true;
+            } else {
+                return Err(BufferTooShort);
             }
         }
 
@@ -4034,6 +4057,8 @@ impl Connection {
                 in_flight = true;
                 self.fec_scheduler.sent_repair_symbol();
                 ack_eliciting = true;
+            } else {
+                return Err(BufferTooShort);
             }
         }
 
@@ -4326,19 +4351,42 @@ impl Connection {
         //        we simply rewrite the frames into the FEC buffer, although
         //        we could have copied it in push_frame_to_pkt!() directly
 
-        if self.emit_fec {
+        if self.emit_fec && hdr_ty == packet::Type::Short {
             let symbol_size = self.fec_encoder.symbol_size();
             // zeroes at the beginning to add PADDING frames at the front of the symbol (they are not sent in the packet)
-            let mut source_symbol_data = vec![0; self.fec_encoder.symbol_size()];
-            let mut fec_buffer = octets::OctetsMut::with_slice(&mut source_symbol_data[symbol_size - payload_len..]);
-            for frame in &frames {
-                frame.to_bytes(&mut fec_buffer)?;
+            let mut source_symbol_data = vec![0; symbol_size];
+            let mut fec_buffer = octets::OctetsMut::with_slice(&mut source_symbol_data);
+
+
+            // We here re-read the written payload to include it inside the source symbol
+            // We cannot browse through the frames vector ar Stream frames are not completely
+            // stored in it but a StreamHeader is stored instead...
+
+            // This is the best way I found to avoid modifying too much the packetization code
+            // of the stream frames
+            let payload_buf = &b.buf()[payload_offset..payload_offset + payload_len];
+            let mut written_frames = octets::Octets::with_slice(payload_buf);
+
+            while written_frames.cap() > 0 {
+                let off_before_parsing = written_frames.off();
+                let frame = frame::Frame::from_bytes(&mut written_frames, hdr_ty, &self.fec_decoder)?;
+                let wire_len = written_frames.off() - off_before_parsing;
+                if frame.fec_protected() {
+                    let written = frame.to_bytes(&mut fec_buffer)?;
+                    if written != wire_len {
+                        return Err(SourceSymbolCreationError);
+                    }
+                }
             }
+
+            let offset = fec_buffer.off();
+            // put the padding in front of the symbol to not mess with stream frames without len
+            source_symbol_data.rotate_right(symbol_size - offset);
             let mut source_symbol_metadata = source_symbol_metadata_from_u64(0);
             self.fec_encoder.protect_data(source_symbol_data, &mut source_symbol_metadata)?;
 
             if pn != source_symbol_metadata_to_u64(source_symbol_metadata) {
-                return Err(Error::FECEncoderError);
+                return Err(Error::BadSymbolID);
             }
         }
 
@@ -6685,7 +6733,8 @@ impl Connection {
                 self.ids.has_new_scids() ||
                 self.ids.has_retire_dcids() ||
                 send_path.needs_ack_eliciting ||
-                send_path.probing_required())
+                send_path.probing_required() ||
+                self.fec_scheduler.should_send_repair(self,send_path, self.fec_encoder.symbol_size()))
         {
             // Only clients can send 0-RTT packets.
             if !self.is_server && self.is_in_early_data() {
@@ -7167,9 +7216,15 @@ impl Connection {
             },
 
             frame::Frame::Repair { repair_symbol } => {
-                let (_, decoded_symbols) = self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol)?;
-                for decoded_symbol in decoded_symbols {
-                    self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
+                    Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
+                    Err(err) => return Err(Error::from(err)),
+                    Ok((_, decoded_symbols)) => {
+                        for decoded_symbol in decoded_symbols {
+                            trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
+                            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                        }
+                    }
                 }
             },
             frame::Frame::DatagramHeader { .. } => unreachable!(),
@@ -16178,6 +16233,7 @@ pub use crate::path::SocketAddrIter;
 pub use crate::recovery::CongestionControlAlgorithm;
 
 pub use crate::stream::StreamIter;
+use crate::Error::{BufferTooShort, SourceSymbolCreationError};
 
 mod cid;
 mod crypto;
