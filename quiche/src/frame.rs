@@ -1153,6 +1153,8 @@ impl Frame {
             },
             Frame::Repair { .. } => QuicFrame::Unknown {
                 raw_frame_type: 0x32,
+                raw: None,
+                frame_type_value: None,
             },
         }
     }
