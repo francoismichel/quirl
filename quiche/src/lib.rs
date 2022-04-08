@@ -382,6 +382,9 @@
 #[macro_use]
 extern crate log;
 
+use networkcoding::DecoderError;
+use networkcoding::EncoderError;
+use networkcoding::SourceSymbolMetadata;
 #[cfg(feature = "qlog")]
 use qlog::events::connectivity::ConnectivityEventType;
 #[cfg(feature = "qlog")]
@@ -416,6 +419,10 @@ use std::str::FromStr;
 
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::time::Instant;
+use networkcoding::{source_symbol_metadata_from_u64, source_symbol_metadata_to_u64, SourceSymbol};
+use networkcoding::vandermonde_lc::decoder::VLCDecoder;
+use networkcoding::vandermonde_lc::encoder::VLCEncoder;
 
 use smallvec::SmallVec;
 
@@ -494,6 +501,8 @@ const DEFAULT_INITIAL_CONGESTION_WINDOW_PACKETS: usize = 10;
 // The maximum data offset that can be stored in a crypto stream.
 const MAX_CRYPTO_STREAM_OFFSET: u64 = 1 << 16;
 
+// the default FEC window size in terms of source symbols
+const DEFAULT_FEC_WINDOW_SIZE: usize = 500;
 /// A specialized [`Result`] type for quiche operations.
 ///
 /// This type is used throughout quiche's public API for any operation that
@@ -564,6 +573,9 @@ pub enum Error {
     /// Error in congestion control.
     CongestionControl,
 
+    /// Error in FEC Scheduler.
+    FECScheduler,
+
     /// Too many identifiers were provided.
     IdLimit,
 
@@ -575,6 +587,18 @@ pub enum Error {
 
     /// The peer sent more data in CRYPTO frames than we can buffer.
     CryptoBufferExceeded,
+
+    /// Error in FEC decoder
+    FECDecoderError(u64),
+
+    /// Error in FEC encoder
+    FECEncoderError(u64),
+
+    /// Generated or received a wrong symbol ID
+    BadSymbolID,
+
+    /// Error during the creation of a source symbol (e.g. could not put correctly the frames to protect in the symbol)
+    SourceSymbolCreationError,
 }
 
 /// QUIC error codes sent on the wire.
@@ -708,6 +732,18 @@ impl std::convert::From<octets::BufferTooShortError> for Error {
     }
 }
 
+impl std::convert::From<networkcoding::DecoderError> for Error {
+    fn from(_err: networkcoding::DecoderError) -> Self {
+        Error::FECDecoderError(_err.to_u64())
+    }
+}
+
+impl std::convert::From<networkcoding::EncoderError> for Error {
+    fn from(_err: networkcoding::EncoderError) -> Self {
+        Error::FECEncoderError(_err.to_u64())
+    }
+}
+
 /// Ancillary information about incoming packets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RecvInfo {
@@ -813,6 +849,11 @@ pub struct Config {
     max_amplification_factor: usize,
 
     disable_dcid_reuse: bool,
+
+    fec_scheduler_algorithm: FECSchedulerAlgorithm,
+    emit_fec: bool,
+    receive_fec: bool,
+    fec_window_size: usize,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -881,6 +922,11 @@ impl Config {
             max_amplification_factor: MAX_AMPLIFICATION_FACTOR,
 
             disable_dcid_reuse: false,
+
+            fec_scheduler_algorithm: FECSchedulerAlgorithm::NoRedundancy,
+            emit_fec: false,
+            receive_fec: false,
+            fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
         })
     }
 
@@ -1350,6 +1396,33 @@ impl Config {
     pub fn set_disable_dcid_reuse(&mut self, v: bool) {
         self.disable_dcid_reuse = v;
     }
+
+    /// Sets the FEC redundancy scheduler algorithm used.
+    ///
+    /// The default value is `FECSchedulerAlgorithm::NoRedundancy`, meaning that
+    /// redundancy is never sent.
+    pub fn set_fec_scheduler_algorithm(&mut self, alg: FECSchedulerAlgorithm) {
+        self.fec_scheduler_algorithm = alg;
+    }
+
+    /// Sets the FEC decoding window size.
+    ///
+    /// The default value is `DEFAULT_FEC_WINDOW_SIZE`.
+    pub fn set_fec_window_size(&mut self, size: usize) {
+        self.fec_window_size = size;
+    }
+
+    /// decides whether FEC should be sent to protect data
+    /// In order for redundancy to be actually sent, it also needs
+    /// a FEC scheduler algorithm different than FECSchedulerAlgorithm::NoRedundancy.
+    pub fn send_fec(&mut self, v: bool) {
+        self.emit_fec = v;
+    }
+
+    /// decides whether REPAIR frames should be processed to recover data
+    pub fn receive_fec(&mut self, v: bool) {
+        self.receive_fec = v;
+    }
 }
 
 /// A QUIC connection.
@@ -1407,6 +1480,15 @@ pub struct Connection {
 
     /// Total number of packets sent with data retransmitted.
     retrans_count: usize,
+
+    /// Total number of source symbols recovered through FEC
+    recov_count: usize,
+
+    /// Total number of repair symbols received
+    repair_symbols_received_count: usize,
+
+    /// Total number of repair symbols received
+    repair_symbols_sent_count: usize,
 
     /// Total number of bytes received from the peer.
     rx_data: u64,
@@ -1544,6 +1626,16 @@ pub struct Connection {
     /// DATAGRAM queues.
     dgram_recv_queue: dgram::DatagramQueue,
     dgram_send_queue: dgram::DatagramQueue,
+
+    fec_encoder: networkcoding::Encoder,
+    fec_decoder: networkcoding::Decoder,
+    latest_metadata_of_symbol_with_fec_protected_frames: Option<SourceSymbolMetadata>,
+    emit_fec: bool,
+    receive_fec: bool,
+    fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
+    fec_window_size: usize,
+    recovered_symbols_need_ack: ranges::RangeSet,
+
 
     /// Whether to emit DATAGRAM frames in the next packet.
     emit_dgram: bool,
@@ -1903,6 +1995,9 @@ impl Connection {
             sent_count: 0,
             lost_count: 0,
             retrans_count: 0,
+            recov_count: 0,
+            repair_symbols_received_count: 0,
+            repair_symbols_sent_count: 0,
             sent_bytes: 0,
             recv_bytes: 0,
             acked_bytes: 0,
@@ -2007,6 +2102,17 @@ impl Connection {
             stopped_stream_remote_count: 0,
 
             max_amplification_factor: config.max_amplification_factor,
+            
+            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(1280, 5000)),
+            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(1280, 5000)),
+            fec_scheduler: Some(fec::fec_scheduler::new_fec_scheduler(config.fec_scheduler_algorithm)),
+            latest_metadata_of_symbol_with_fec_protected_frames: None,
+
+
+            emit_fec: config.emit_fec,
+            receive_fec: config.receive_fec,
+            fec_window_size: config.fec_window_size,
+            recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
         };
 
         if let Some(odcid) = odcid {
@@ -2358,6 +2464,20 @@ impl Connection {
 
             None => false,
         }
+    }
+
+    fn process_frames_of_source_symbol(&mut self, decoded_symbol: SourceSymbol, now: Instant, epoch: packet::Epoch, hdr: &packet::Header,
+        recv_path_id: usize) -> Result<()> {
+        // TODO: ensure epoch and packet type are correct
+        let data = decoded_symbol.take();
+        let mut source_symbol_payload = octets::Octets::with_slice(data.as_slice());
+        while source_symbol_payload.cap() > 0 {
+            let frame = frame::Frame::from_bytes(&mut source_symbol_payload, packet::Type::Short, &self.fec_decoder)?;
+            // FIXME: we currently give the current active path to process_frame, but the frame has been recovered through FEC
+            self.process_frame(frame, hdr, recv_path_id, epoch, now)?;
+            // TODO: log the decoded source symbol & announce its recovery to the sender
+        }
+        Ok(())
     }
 
     /// Processes a single QUIC packet received from the peer.
@@ -2866,9 +2986,17 @@ impl Connection {
         // whether this is a non-probing packet.
         let mut probing = true;
 
+        let mut source_symbol_data = Vec::with_capacity(1500);
+        
         // Process packet payload.
         while payload.cap() > 0 {
-            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
+            let offset_before_frame_processing = payload.off();
+            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &self.fec_decoder)?;
+            let offset_after_frame_processing = payload.off();
+
+            if self.receive_fec {
+                source_symbol_data.extend_from_slice(&payload.buf()[offset_before_frame_processing..offset_after_frame_processing]);
+            }
 
             qlog_with_type!(QLOG_PACKET_RX, self.qlog, _q, {
                 qlog_frames.push(frame.to_qlog());
@@ -3058,6 +3186,18 @@ impl Connection {
                             self.streams.collect(stream_id, local);
                         }
                     },
+
+                    frame::Frame::Repair { .. } => {
+                        if let Some(scheduler) = &mut self.fec_scheduler {
+                            scheduler.acked_repair_symbol();
+                        }
+                    },
+
+                    frame::Frame::SourceSymbolHeader { metadata, .. } => {
+                        if self.emit_fec {
+                            self.fec_encoder.remove_up_to(metadata);
+                        }
+                    }
 
                     _ => (),
                 }
@@ -3502,100 +3642,117 @@ impl Connection {
 
         // Process lost frames. There might be several paths having lost frames.
         for (_, p) in self.paths.iter_mut() {
-            for lost in p.recovery.get_lost_frames(epoch) {
-                match lost {
-                    frame::Frame::CryptoHeader { offset, length } => {
-                        pkt_space.crypto_stream.send.retransmit(offset, length);
+            for lost_frame in p.recovery.get_lost_frames(epoch) {
+                match lost_frame {
+                    recovery::LostFrame::Lost(frame) => {
+                        match frame {
+                            frame::Frame::CryptoHeader { offset, length } => {
+                                pkt_space.crypto_stream.send.retransmit(offset, length);
 
-                        self.stream_retrans_bytes += length as u64;
-                        p.stream_retrans_bytes += length as u64;
+                                self.stream_retrans_bytes += length as u64;
+                                p.stream_retrans_bytes += length as u64;
 
-                        self.retrans_count += 1;
-                        p.retrans_count += 1;
-                    },
+                                self.retrans_count += 1;
+                                p.retrans_count += 1;
+                            },
 
-                    frame::Frame::StreamHeader {
-                        stream_id,
-                        offset,
-                        length,
-                        fin,
-                    } => {
-                        let stream = match self.streams.get_mut(stream_id) {
-                            Some(v) => v,
+                            frame::Frame::StreamHeader {
+                                stream_id,
+                                offset,
+                                length,
+                                fin,
+                            } => {
+                                let stream = match self.streams.get_mut(stream_id) {
+                                    Some(v) => v,
 
-                            None => continue,
-                        };
+                                    None => continue,
+                                };
 
-                        let was_flushable = stream.is_flushable();
+                                let was_flushable = stream.is_flushable();
 
-                        let empty_fin = length == 0 && fin;
+                                let empty_fin = length == 0 && fin;
 
-                        stream.send.retransmit(offset, length);
+                                stream.send.retransmit(offset, length);
 
-                        // If the stream is now flushable push it to the
-                        // flushable queue, but only if it wasn't already
-                        // queued.
-                        //
-                        // Consider the stream flushable also when we are
-                        // sending a zero-length frame that has the fin flag
-                        // set.
-                        if (stream.is_flushable() || empty_fin) && !was_flushable
-                        {
-                            let priority_key = Arc::clone(&stream.priority_key);
-                            self.streams.insert_flushable(&priority_key);
+                                // If the stream is now flushable push it to the
+                                // flushable queue, but only if it wasn't already
+                                // queued.
+                                //
+                                // Consider the stream flushable also when we are
+                                // sending a zero-length frame that has the fin flag
+                                // set.
+                                if (stream.is_flushable() || empty_fin) && !was_flushable
+                                {
+                                    let priority_key = Arc::clone(&stream.priority_key);
+                                    self.streams.insert_flushable(&priority_key);
+                                }
+
+                                self.stream_retrans_bytes += length as u64;
+                                p.stream_retrans_bytes += length as u64;
+
+                                self.retrans_count += 1;
+                                p.retrans_count += 1;
+                            },
+
+                            frame::Frame::ACK { .. } => {
+                                pkt_space.ack_elicited = true;
+                            },
+
+                            frame::Frame::ResetStream {
+                                stream_id,
+                                error_code,
+                                final_size,
+                            } =>
+                                if self.streams.get(stream_id).is_some() {
+                                    self.streams
+                                        .insert_reset(stream_id, error_code, final_size);
+                                },
+
+                            // Retransmit HANDSHAKE_DONE only if it hasn't been acked at
+                            // least once already.
+                            frame::Frame::HandshakeDone if !self.handshake_done_acked => {
+                                self.handshake_done_sent = false;
+                            },
+
+                            frame::Frame::MaxStreamData { stream_id, .. } => {
+                                if self.streams.get(stream_id).is_some() {
+                                    self.streams.insert_almost_full(stream_id);
+                                }
+                            },
+
+                            frame::Frame::MaxData { .. } => {
+                                self.almost_full = true;
+                            },
+        
+                            frame::Frame::NewConnectionId { seq_num, .. } => {
+                                self.ids.mark_advertise_new_scid_seq(seq_num, true);
+                            },
+        
+                            frame::Frame::RetireConnectionId { seq_num } => {
+                                self.ids.mark_retire_dcid_seq(seq_num, true);
+                            },
+
+                            frame::Frame::Repair { .. } => {
+                                if let Some(scheduler) = &mut self.fec_scheduler {
+                                    scheduler.lost_repair_symbol();
+                                }
+                            },
+        
+                            frame::Frame::Ping { mtu_probe } if mtu_probe.is_some() => {
+                                p.pmtud.pmtu_probe_lost();
+                            },
+                            _ => (),
                         }
-
-                        self.stream_retrans_bytes += length as u64;
-                        p.stream_retrans_bytes += length as u64;
-
-                        self.retrans_count += 1;
-                        p.retrans_count += 1;
-                    },
-
-                    frame::Frame::ACK { .. } => {
-                        pkt_space.ack_elicited = true;
-                    },
-
-                    frame::Frame::ResetStream {
-                        stream_id,
-                        error_code,
-                        final_size,
-                    } =>
-                        if self.streams.get(stream_id).is_some() {
-                            self.streams
-                                .insert_reset(stream_id, error_code, final_size);
-                        },
-
-                    // Retransmit HANDSHAKE_DONE only if it hasn't been acked at
-                    // least once already.
-                    frame::Frame::HandshakeDone if !self.handshake_done_acked => {
-                        self.handshake_done_sent = false;
-                    },
-
-                    frame::Frame::MaxStreamData { stream_id, .. } => {
-                        if self.streams.get(stream_id).is_some() {
-                            self.streams.insert_almost_full(stream_id);
+                    }
+                    recovery::LostFrame::LostAndRecovered(frame) => {
+                        if let frame::Frame::Repair { .. } = frame {
+                            if let Some(scheduler) = &mut self.fec_scheduler {
+                                scheduler.lost_repair_symbol();
+                            }
                         }
                     },
-
-                    frame::Frame::MaxData { .. } => {
-                        self.almost_full = true;
-                    },
-
-                    frame::Frame::NewConnectionId { seq_num, .. } => {
-                        self.ids.mark_advertise_new_scid_seq(seq_num, true);
-                    },
-
-                    frame::Frame::RetireConnectionId { seq_num } => {
-                        self.ids.mark_retire_dcid_seq(seq_num, true)?;
-                    },
-
-                    frame::Frame::Ping { mtu_probe } if mtu_probe.is_some() => {
-                        p.pmtud.pmtu_probe_lost();
-                    },
-
-                    _ => (),
                 }
+                
             }
         }
 
@@ -3716,6 +3873,7 @@ impl Connection {
         let mut in_flight = false;
         // Foll. flag used to upgrade datagram size, if probe successful
         let mut pmtud_probe = false;
+        let mut fec_protected = false;
         let mut has_data = false;
 
         // Whether or not we should explicitly elicit an ACK via PING frame if we
@@ -3782,12 +3940,16 @@ impl Connection {
             }
         }
 
+        let left_before_reduction_by_cwnd = left;
         // Limit output packet size by congestion window size.
         left = cmp::min(
             left,
             // Bytes consumed by ACK frames.
             cwnd_available.saturating_sub(left_before_packing_ack_frame - left),
         );
+
+
+        let space_reduction_due_to_cwnd = left_before_reduction_by_cwnd - left;
 
         let mut challenge_data = None;
 
@@ -3903,6 +4065,18 @@ impl Connection {
         let path = self.paths.get_mut(send_pid)?;
 
         if pkt_type == packet::Type::Short && !is_closing {
+
+            // create SOURCE_SYMBOL_ACK frame
+            if self.recovered_symbols_need_ack.len() > 0 {
+                let frame = frame::Frame::SourceSymbolACK {
+                    ranges: self.recovered_symbols_need_ack.clone(),
+                };
+    
+                if push_frame_to_pkt!(b, frames, frame, left) {
+                    self.recovered_symbols_need_ack = ranges::RangeSet::new(crate::MAX_ACK_RANGES);
+                }
+            }
+
             // Create NEW_CONNECTION_ID frames as needed.
             while let Some(seq_num) = self.ids.next_advertise_new_scid_seq() {
                 let frame = self.ids.get_new_connection_id_frame_for(seq_num)?;
@@ -4243,6 +4417,72 @@ impl Connection {
             do_dgram = true;
         }
 
+
+        let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?, recovered: false}.wire_len();
+        let should_protect_packet = self.emit_fec 
+                                    && !is_closing 
+                                    && path.active() 
+                                    && pkt_type == packet::Type::Short
+                                    && ((left > max_fec_overhead + 1 + frame::MAX_DGRAM_OVERHEAD + self.dgram_send_queue.peek_front_len().unwrap_or(left + 1) && do_dgram) // enough space to write a datagram frame and its content
+                                        || (left > max_fec_overhead + 1 + frame::MAX_STREAM_OVERHEAD && stream_to_emit)); // enough space to write a stream frame
+
+
+        if should_protect_packet {
+            left -= std::cmp::min(32usize.saturating_sub(space_reduction_due_to_cwnd), left);
+        }
+
+        
+        // Create REPAIR frame.
+        if self.emit_fec && pkt_type == packet::Type::Short
+            && self.should_send_repair_symbol(send_pid)?
+            && self.fec_encoder.can_send_repair_symbols() {
+            if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
+                match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
+                    Ok(rs) => {
+                        let frame = frame::Frame::Repair {
+                            repair_symbol: rs,
+                        };
+                        if push_frame_to_pkt!(b, frames, frame, left) {
+                            in_flight = true;
+                            self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
+                            ack_eliciting = true;
+                            self.repair_symbols_sent_count += 1;
+                        } else {
+                            return Err(BufferTooShort);
+                        }
+                    }
+                    Err(EncoderError::NoSymbolToGenerate) => (),    // because generate_up_to may not be able to generate even if can_generate returned true
+                    Err(err) => {
+                        return Err(Error::from(err));
+                    }
+                }
+            }
+        }
+
+        // redo the mutable borrows of conn
+        let path = self.paths.get_mut(send_pid)?;
+        let pkt_space = &mut self.pkt_num_spaces[epoch];
+
+        if should_protect_packet {
+            left = std::cmp::min(left, self.fec_encoder.symbol_size().saturating_sub(b.off() - payload_offset));
+            let frame = frame::Frame::SourceSymbolHeader { metadata: self.fec_encoder.next_metadata()?, recovered: false };
+            if frame.wire_len() < left {
+                if push_frame_to_pkt!(b, frames, frame, left) {
+                    in_flight = true;
+                    fec_protected = true;
+                    if let Some(fec_scheduler) = &mut self.fec_scheduler {
+                        fec_scheduler.sent_source_symbol();
+                    }
+                } else {
+                    error!("buffer too short when adding ID frame");
+                    return Err(BufferTooShort);
+                }
+            } else {
+                warn!("could not add ID frame: buffer too short");
+            }
+        }
+        let source_symbol_offset = b.off();
+
         // Create DATAGRAM frame.
         if (pkt_type == packet::Type::Short || pkt_type == packet::Type::ZeroRTT) &&
             left > frame::MAX_DGRAM_OVERHEAD &&
@@ -4523,6 +4763,63 @@ impl Connection {
         let mut qlog_frames: SmallVec<
             [qlog::events::quic::QuicFrame; 1],
         > = SmallVec::with_capacity(frames.len());
+
+        for frame in &mut frames {
+            trace!("{} tx frm {:?}", self.trace_id, frame);
+
+            qlog_with_type!(QLOG_PACKET_TX, self.qlog, _q, {
+                qlog_frames.push(frame.to_qlog());
+            });
+        }
+
+
+        // FIXME: to avoid inserting FEC inside quiche's code too much,
+        //        we simply rewrite the frames into the FEC buffer, although
+        //        we could have copied it in push_frame_to_pkt!() directly
+
+        if fec_protected {
+            let symbol_size = self.fec_encoder.symbol_size();
+            // zeroes at the beginning to add PADDING frames at the front of the symbol (they are not sent in the packet)
+            let mut source_symbol_data = vec![0; symbol_size];
+            let mut fec_buffer = octets::OctetsMut::with_slice(&mut source_symbol_data);
+
+
+            // We here re-read the written payload to include it inside the source symbol
+            // We cannot browse through the frames vector as Stream frames are not completely
+            // stored in it but a StreamHeader is stored instead...
+
+            // This is the best way I found to avoid modifying too much the packetization code
+            // of the stream frames
+            let unprotected_frames_data_len = source_symbol_offset - payload_offset;
+            let source_symbol_len = payload_len - unprotected_frames_data_len;
+            let protected_data_buf = &b.buf()[source_symbol_offset..source_symbol_offset + source_symbol_len];
+            let mut written_frames = octets::Octets::with_slice(protected_data_buf);
+
+            let mut packet_fec_protected = false;
+
+
+            while written_frames.cap() > 0 {
+                let off_before_parsing = written_frames.off();
+                let frame = frame::Frame::from_bytes(&mut written_frames, hdr_ty, &self.fec_decoder)?;
+                let wire_len = written_frames.off() - off_before_parsing;
+                packet_fec_protected = true;
+                let written = frame.to_bytes(&mut fec_buffer)?;
+                if written != wire_len {
+                    error!("FEC: did not write the correct amount of bytes");
+                    return Err(SourceSymbolCreationError);
+                }
+            }
+
+            let offset = fec_buffer.off();
+            // put the padding in front of the symbol to not mess with stream frames without len
+            source_symbol_data.rotate_right(symbol_size - offset);
+            let mut source_symbol_metadata = source_symbol_metadata_from_u64(0);
+            self.fec_encoder.protect_data(source_symbol_data, &mut source_symbol_metadata)?;
+
+            if packet_fec_protected {
+                self.latest_metadata_of_symbol_with_fec_protected_frames = Some(source_symbol_metadata);
+            }
+        }
 
         for frame in &mut frames {
             trace!("{} tx frm {:?}", self.trace_id, frame);
@@ -6572,6 +6869,9 @@ impl Connection {
             sent: self.sent_count,
             lost: self.lost_count,
             retrans: self.retrans_count,
+            recov: self.recov_count,
+            repair_received: self.repair_symbols_received_count,
+            repair_sent: self.repair_symbols_sent_count,
             sent_bytes: self.sent_bytes,
             recv_bytes: self.recv_bytes,
             acked_bytes: self.acked_bytes,
@@ -6672,6 +6972,13 @@ impl Connection {
         self.parsed_peer_transport_params = true;
 
         Ok(())
+    }
+
+    fn should_send_repair_symbol(&mut self, pid: usize) -> Result<bool> {
+        let mut fec_scheduler = self.fec_scheduler.take().unwrap();
+        let should_send_repair = fec_scheduler.should_send_repair(self, self.paths.get(pid)?, self.fec_encoder.symbol_size());
+        self.fec_scheduler = Some(fec_scheduler);
+        Ok(should_send_repair)
     }
 
     fn process_peer_transport_params(
@@ -6808,7 +7115,7 @@ impl Connection {
     }
 
     /// Selects the packet type for the next outgoing packet.
-    fn write_pkt_type(&self, send_pid: usize) -> Result<packet::Type> {
+    fn write_pkt_type(&mut self, send_pid: usize) -> Result<packet::Type> {
         // On error send packet in the latest epoch available, but only send
         // 1-RTT ones when the handshake is completed.
         if self
@@ -6892,7 +7199,8 @@ impl Connection {
                 self.ids.has_retire_dcids() ||
                 send_path.pmtud.get_probe_status() ||
                 send_path.needs_ack_eliciting ||
-                send_path.probing_required())
+                send_path.probing_required() ||
+                (self.emit_fec && self.should_send_repair_symbol(send_pid)?))
         {
             // Only clients can send 0-RTT packets.
             if !self.is_server && self.is_in_early_data() {
@@ -6970,6 +7278,11 @@ impl Connection {
                     self.lost_bytes += lost_bytes as u64;
                     self.acked_bytes += acked_bytes as u64;
                 }
+
+                if self.handshake_confirmed {
+                    self.drop_epoch_state(packet::Epoch::Handshake, now);
+                }
+
             },
 
             frame::Frame::ResetStream {
@@ -7401,6 +7714,59 @@ impl Connection {
                 self.dgram_recv_queue.push(data)?;
             },
 
+            frame::Frame::Repair { repair_symbol } => {
+                self.repair_symbols_received_count += 1;
+                match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
+                    Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
+                    Err(err) => return Err(Error::from(err)),
+                    Ok((_, decoded_symbols)) => {
+                        for decoded_symbol in decoded_symbols {
+                            self.recov_count += 1;
+                            let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                            trace!("process decoded symbol {}", mdu64);
+                            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                            self.recovered_symbols_need_ack.push_item(mdu64);
+                        }
+                    }
+                }
+            },
+
+
+            frame::Frame::SourceSymbol { source_symbol } => {
+                let id = source_symbol_metadata_to_u64(source_symbol.metadata());
+                if self.fec_window_size as u64 <= id {
+                    let path = self.paths.get_active()?;
+                    self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_window_size as u64), Some(now - path.recovery.pto()));
+                }
+                
+                match self.fec_decoder.receive_source_symbol(source_symbol, now) {
+                    Err(DecoderError::UnusedSourceSymbol) => {
+                        info!("received a source symbol unused by the decoder");
+                    },
+                    Err(err) => return Err(Error::from(err)),
+                    Ok(decoded_symbols) => {
+                        for decoded_symbol in decoded_symbols {
+                            self.recov_count += 1;
+                            let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                            trace!("process decoded symbol {}", mdu64);
+                            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                            self.recovered_symbols_need_ack.push_item(mdu64);
+                        }
+                    }
+                }
+            },
+
+            frame::Frame::SourceSymbolACK { ranges } => {
+                for (_, p) in self.paths.iter_mut() {
+                    p.recovery.on_source_symbol_ack_received(
+                        &ranges,
+                        epoch,
+                        &self.trace_id,
+                    );
+                }
+            }
+
+            frame::Frame::SourceSymbolHeader { .. } => unreachable!(),
             frame::Frame::DatagramHeader { .. } => unreachable!(),
         }
 
@@ -7930,6 +8296,15 @@ pub struct Stats {
 
     /// The number of sent QUIC packets with retransmitted data.
     pub retrans: usize,
+
+    /// The number of source symbols recovered using FEC
+    pub recov: usize,
+
+    /// The number of repair symbols sent
+    pub repair_sent: usize,
+
+    /// The number of repair symbols received
+    pub repair_received: usize,
 
     /// The number of sent bytes.
     pub sent_bytes: u64,
@@ -8905,7 +9280,7 @@ pub mod testing {
         let mut frames = Vec::new();
 
         while payload.cap() > 0 {
-            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
+            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &conn.fec_decoder)?;
             frames.push(frame);
         }
 
@@ -15605,6 +15980,7 @@ mod tests {
         assert_eq!(pipe.client.retired_scid_next(), Some(scid));
         assert_eq!(pipe.client.retired_scid_next(), None);
     }
+    
 
     #[test]
     fn sending_duplicate_scids() {
@@ -17339,8 +17715,10 @@ pub use crate::path::PathStats;
 pub use crate::path::SocketAddrIter;
 
 pub use crate::recovery::congestion::CongestionControlAlgorithm;
+pub use crate::fec::fec_scheduler::FECSchedulerAlgorithm;
 
 pub use crate::stream::StreamIter;
+use crate::Error::{BufferTooShort, SourceSymbolCreationError};
 
 mod cid;
 mod crypto;
@@ -17359,3 +17737,4 @@ mod ranges;
 mod recovery;
 mod stream;
 mod tls;
+mod fec;
