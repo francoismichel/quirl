@@ -59,6 +59,7 @@ pub struct CommonArgs {
     pub initial_cwnd_packets: u64,
     pub multipath: bool,
     pub multipath_old: bool,
+    pub send_fec: bool,
 }
 
 /// Creates a new `CommonArgs` structure using the provided [`Docopt`].
@@ -191,6 +192,7 @@ impl Args for CommonArgs {
             } else {
                 None
             };
+        let send_fec = args.get_bool("--send-fec");
 
         let initial_cwnd_packets = args
             .get_str("--initial-cwnd-packets")
@@ -225,6 +227,7 @@ impl Args for CommonArgs {
             initial_cwnd_packets,
             multipath,
             multipath_old,
+            send_fec,
         }
     }
 }
@@ -256,6 +259,7 @@ impl Default for CommonArgs {
             initial_cwnd_packets: 10,
             multipath: false,
             multipath_old: false,
+            send_fec: false,
         }
     }
 }
@@ -307,6 +311,7 @@ Options:
   --session-file PATH      File used to cache a TLS session for resumption.
   --source-port PORT       Source port to use when connecting to the server [default: 0].
   --initial-cwnd-packets PACKETS   The initial congestion window size in terms of packet count [default: 10].
+  --send-fec               Sends FEC to protect the STREAM and DATAGRAM frames
   -h --help                Show this screen.
 ";
 
@@ -543,6 +548,7 @@ Options:
   --initial-cwnd-packets PACKETS      The initial congestion window size in terms of packet count [default: 10].
   --multipath                 Enable multipath support.
   --multipath-old             Enable (old v4) multipath support.
+  --send-fec               Sends FEC to protect the STREAM and DATAGRAM frames
   -h --help                   Show this screen.
 ";
 
