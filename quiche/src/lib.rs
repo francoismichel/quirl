@@ -376,8 +376,7 @@ use std::str::FromStr;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::time::Instant;
-use networkcoding::{Decoder, Encoder, source_symbol_metadata_from_u64, SourceSymbol};
-use networkcoding::Encoder::RLC;
+use networkcoding::{Decoder, Encoder, source_symbol_metadata_from_u64, source_symbol_metadata_to_u64, SourceSymbol};
 use networkcoding::rlc::decoder::RLCDecoder;
 use networkcoding::rlc::encoder::RLCEncoder;
 
@@ -710,6 +709,8 @@ pub struct Config {
     max_stream_window: u64,
 
     disable_dcid_reuse: bool,
+
+    fec: bool,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -768,6 +769,8 @@ impl Config {
             max_stream_window: stream::MAX_STREAM_WINDOW,
 
             disable_dcid_reuse: false,
+
+            fec: false,
         })
     }
 
@@ -1360,6 +1363,7 @@ pub struct Connection {
 
     fec_encoder: networkcoding::Encoder,
     fec_decoder: networkcoding::Decoder,
+    emit_fec: bool,
 
     /// Whether to emit DATAGRAM frames in the next packet.
     emit_dgram: bool,
@@ -1803,6 +1807,7 @@ impl Connection {
 
             fec_encoder: Encoder::RLC(RLCEncoder::new(5000, 1300, 42)),
             fec_decoder: Decoder::RLC(RLCDecoder::new(5000, 1300)),
+            emit_fec: config.fec,
         };
 
         // Don't support multipath with zero-length CIDs.
@@ -2126,13 +2131,14 @@ impl Connection {
         Ok(())
     }
 
-    fn process_frames_of_source_symbol(&mut self, decoded_symbol: SourceSymbol, now: Instant, epoch: packet::Epoch) -> Result<()> {
+    fn process_frames_of_source_symbol(&mut self, decoded_symbol: SourceSymbol, now: Instant, epoch: packet::Epoch, hdr: &packet::Header,
+        recv_path_id: usize) -> Result<()> {
         // TODO: ensure epoch and packet type are correct
         let data = decoded_symbol.take();
         let mut source_symbol_payload = octets::Octets::with_slice(data.as_slice());
         while source_symbol_payload.cap() > 0 {
             let frame = frame::Frame::from_bytes(&mut source_symbol_payload, packet::Type::Short, &self.fec_decoder)?;
-            self.process_frame(frame, epoch, now)?;
+            self.process_frame(frame, hdr, recv_path_id, epoch, now)?;
             //TODO: log the decdoded source symbol & announce its recovery to the sender
         }
         Ok(())
@@ -2615,7 +2621,7 @@ impl Connection {
                                                 )?;
 
         for decoded_symbol in decoded_symbols {
-            self.process_frames_of_source_symbol(decoded_symbol, now, epoch)?;
+            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, &hdr, recv_pid)?;
         }
 
         qlog_with_type!(QLOG_PACKET_RX, self.qlog, q, {
@@ -4042,6 +4048,17 @@ impl Connection {
             do_dgram = true;
         }
 
+        if self.emit_fec && (do_dgram || do_stream) {
+            // add PADDING frames to contain the repair frame afterwards
+            let n_padding_for_fec = 32;
+
+            let frame = frame::Frame::Padding { len: n_padding_for_fec };
+
+            if push_frame_to_pkt!(b, frames, frame, left) {
+                in_flight = true;
+            }
+        }
+
         // Create DATAGRAM frame.
         if (pkt_type == packet::Type::Short || pkt_type == packet::Type::ZeroRTT) &&
             left > frame::MAX_DGRAM_OVERHEAD &&
@@ -4319,6 +4336,35 @@ impl Connection {
 
         #[cfg(feature = "qlog")]
         let mut qlog_frames = Vec::with_capacity(frames.len());
+
+        for frame in &mut frames {
+            trace!("{} tx frm {:?}", self.trace_id, frame);
+
+            qlog_with_type!(QLOG_PACKET_TX, self.qlog, _q, {
+                qlog_frames.push(frame.to_qlog());
+            });
+        }
+
+
+        // FIXME: to avoid inserting FEC infide quiche's code too much,
+        //        we simply rewrite the frames into the FEC buffer, although
+        //        we could have copied it in push_frame_to_pkt!() directly
+
+        if self.emit_fec {
+            let symbol_size = self.fec_encoder.symbol_size();
+            // zeroes at the beginning to add PADDING frames at the front of the symbol (they are not sent in the packet)
+            let mut source_symbol_data = vec![0; self.fec_encoder.symbol_size()];
+            let mut fec_buffer = octets::OctetsMut::with_slice(&mut source_symbol_data[symbol_size - payload_len..]);
+            for frame in &frames {
+                frame.to_bytes(&mut fec_buffer)?;
+            }
+            let mut source_symbol_metadata = source_symbol_metadata_from_u64(0);
+            self.fec_encoder.protect_data(source_symbol_data, &mut source_symbol_metadata)?;
+
+            if pn != source_symbol_metadata_to_u64(source_symbol_metadata) {
+                return Err(Error::FECEncoderError);
+            }
+        }
 
         for frame in &mut frames {
             trace!("{} tx frm {:?}", self.trace_id, frame);
@@ -7184,7 +7230,7 @@ impl Connection {
             frame::Frame::Repair { repair_symbol } => {
                 let (_, decoded_symbols) = self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol)?;
                 for decoded_symbol in decoded_symbols {
-                    self.process_frames_of_source_symbol(decoded_symbol, now, epoch)?;
+                    self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
                 }
             },
             frame::Frame::DatagramHeader { .. } => unreachable!(),

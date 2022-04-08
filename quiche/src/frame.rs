@@ -1163,8 +1163,10 @@ impl Frame {
                 seq_num: *seq_num,
                 status: *status,
             },
-            Frame::Repair { .. } => QuicFrame::Unknown {
+            Frame::Repair { repair_symbol } => QuicFrame::Unknown {
                 raw_frame_type: 0x32,
+                raw_length: Some(repair_symbol.wire_len() as u32),
+                raw: None,
             },
         }
     }
