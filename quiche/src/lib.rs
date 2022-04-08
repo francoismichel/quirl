@@ -411,6 +411,11 @@ use std::str::FromStr;
 
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::time::Instant;
+use networkcoding::{Decoder, Encoder, source_symbol_metadata_from_u64, SourceSymbol};
+use networkcoding::Encoder::RLC;
+use networkcoding::rlc::decoder::RLCDecoder;
+use networkcoding::rlc::encoder::RLCEncoder;
 
 use smallvec::SmallVec;
 
@@ -564,6 +569,12 @@ pub enum Error {
 
     /// Compliance error with the multipath extensions.
     MultiPathViolation,
+
+    /// Error in FEC decoder
+    FECDecoderError,
+
+    /// Error in FEC encoder
+    FECEncoderError,
 }
 
 impl Error {
@@ -625,6 +636,18 @@ impl std::error::Error for Error {
 impl std::convert::From<octets::BufferTooShortError> for Error {
     fn from(_err: octets::BufferTooShortError) -> Self {
         Error::BufferTooShort
+    }
+}
+
+impl std::convert::From<networkcoding::DecoderError> for Error {
+    fn from(_err: networkcoding::DecoderError) -> Self {
+        Error::FECDecoderError
+    }
+}
+
+impl std::convert::From<networkcoding::EncoderError> for Error {
+    fn from(_err: networkcoding::EncoderError) -> Self {
+        Error::FECEncoderError
     }
 }
 
@@ -1417,6 +1440,9 @@ pub struct Connection {
     dgram_recv_queue: dgram::DatagramQueue,
     dgram_send_queue: dgram::DatagramQueue,
 
+    fec_encoder: networkcoding::Encoder,
+    fec_decoder: networkcoding::Decoder,
+
     /// Whether to emit DATAGRAM frames in the next packet.
     emit_dgram: bool,
 
@@ -1861,6 +1887,9 @@ impl Connection {
             newly_acked: Vec::new(),
 
             dcid_seq_to_abandon: VecDeque::new(),
+
+            fec_encoder: Encoder::RLC(RLCEncoder::new(5000, 1300, 42)),
+            fec_decoder: Decoder::RLC(RLCDecoder::new(5000, 1300)),
         };
 
         // Don't support multipath with zero-length CIDs.
@@ -2220,6 +2249,18 @@ impl Connection {
 
             None => false,
         }
+    }
+    
+    fn process_frames_of_source_symbol(&mut self, decoded_symbol: SourceSymbol, now: Instant, epoch: packet::Epoch) -> Result<()> {
+        // TODO: ensure epoch and packet type are correct
+        let data = decoded_symbol.take();
+        let mut source_symbol_payload = octets::Octets::with_slice(data.as_slice());
+        while source_symbol_payload.cap() > 0 {
+            let frame = frame::Frame::from_bytes(&mut source_symbol_payload, packet::Type::Short, &self.fec_decoder)?;
+            self.process_frame(frame, epoch, now)?;
+            //TODO: log the decdoded source symbol & announce its recovery to the sender
+        }
+        Ok(())
     }
 
     /// Processes a single QUIC packet received from the peer.
@@ -2791,9 +2832,17 @@ impl Connection {
         // whether this is a non-probing packet.
         let mut probing = true;
 
+        let mut source_symbol_data = Vec::with_capacity(1500);
+        
         // Process packet payload.
         while payload.cap() > 0 {
-            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
+            let offset_before_frame_processing = payload.off();
+            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &self.fec_decoder)?;
+            let offset_after_frame_processing = payload.off();
+
+            if frame.ack_eliciting() {
+                source_symbol_data.extend_from_slice(&payload.buf()[offset_before_frame_processing..offset_after_frame_processing]);
+            }
 
             qlog_with_type!(QLOG_PACKET_RX, self.qlog, _q, {
                 qlog_frames.push(frame.to_qlog());
@@ -2812,6 +2861,16 @@ impl Connection {
                 frame_processing_err = Some(e);
                 break;
             }
+        }
+
+        let decoded_symbols = self.fec_decoder.receive_source_symbol(SourceSymbol::new(
+                                                        source_symbol_metadata_from_u64(pn),
+                                                                source_symbol_data
+                                                            )
+                                                )?;
+
+        for decoded_symbol in decoded_symbols {
+            self.process_frames_of_source_symbol(decoded_symbol, now, epoch)?;
         }
 
         qlog_with_type!(QLOG_PACKET_RX, self.qlog, q, {
@@ -7509,6 +7568,12 @@ impl Connection {
                 self.dgram_recv_queue.push(data)?;
             },
 
+            frame::Frame::Repair { repair_symbol } => {
+                let (_, decoded_symbols) = self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol)?;
+                for decoded_symbol in decoded_symbols {
+                    self.process_frames_of_source_symbol(decoded_symbol, now, epoch)?;
+                }
+            },
             frame::Frame::DatagramHeader { .. } => unreachable!(),
 
             frame::Frame::ACKMP {
@@ -9242,7 +9307,7 @@ pub mod testing {
         let mut frames = Vec::new();
 
         while payload.cap() > 0 {
-            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
+            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &conn.fec_decoder)?;
             frames.push(frame);
         }
 

@@ -25,6 +25,7 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use std::convert::TryInto;
+use networkcoding::{Decoder, RepairSymbol};
 
 use crate::Error;
 use crate::Result;
@@ -199,11 +200,15 @@ pub enum Frame {
         status: u64,
         v5: bool,
     },
+
+    Repair {
+        repair_symbol: RepairSymbol,
+    },
 }
 
 impl Frame {
     pub fn from_bytes(
-        b: &mut octets::Octets, pkt: packet::Type,
+        b: &mut octets::Octets, pkt: packet::Type, decoder: &Decoder
     ) -> Result<Frame> {
         let frame_type = b.get_varint()?;
 
@@ -344,6 +349,13 @@ impl Frame {
                 seq_num: b.get_varint()?,
                 status: b.get_varint()?,
                 v5: frame_type == 0x15228c06,
+            },
+            0x32 => {
+                let (read, repair_symbol) = decoder.read_repair_symbol(b.to_vec().as_slice())?;
+                b.skip(read)?;
+                Frame::Repair {
+                    repair_symbol,
+                }
             },
 
             _ => return Err(Error::InvalidFrame),
@@ -642,6 +654,10 @@ impl Frame {
                 b.put_varint(*seq_num)?;
                 b.put_varint(*status)?;
             },
+            Frame::Repair { repair_symbol } => {
+                b.put_varint(0x32)?;
+                b.put_bytes(repair_symbol.get())?;
+            }
         }
 
         Ok(before - b.cap())
@@ -865,6 +881,9 @@ impl Frame {
                 octets::varint_len(*dcid_seq_num) +
                 octets::varint_len(*seq_num) +
                 octets::varint_len(*status)
+            },
+            Frame::Repair { repair_symbol } => {
+                repair_symbol.wire_len()
             },
         }
     }
@@ -1132,6 +1151,9 @@ impl Frame {
                 seq_num: *seq_num,
                 status: *status,
             },
+            Frame::Repair { .. } => QuicFrame::Unknown {
+                raw_frame_type: 0x32,
+            },
         }
     }
 }
@@ -1335,6 +1357,9 @@ impl std::fmt::Debug for Frame {
                     f,
                     "PATH_STATUS dcid_seq_num={dcid_seq_num:x} seq_num={seq_num:x} status={status:x}",
                 )?;
+            },
+            Frame::Repair { repair_symbol } => {
+                write!(f, "REPAIR len={}", repair_symbol.wire_len())?;
             },
         }
 
