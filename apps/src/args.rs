@@ -55,6 +55,7 @@ pub struct CommonArgs {
     pub qpack_blocked_streams: Option<u64>,
     pub initial_cwnd_packets: u64,
     pub send_fec: bool,
+    pub receive_fec: bool,
 }
 
 /// Creates a new `CommonArgs` structure using the provided [`Docopt`].
@@ -187,6 +188,7 @@ impl Args for CommonArgs {
                 None
             };
         let send_fec = args.get_bool("--send-fec");
+        let receive_fec = args.get_bool("--receive-fec");
 
         let initial_cwnd_packets = args
             .get_str("--initial-cwnd-packets")
@@ -217,6 +219,7 @@ impl Args for CommonArgs {
             qpack_blocked_streams,
             initial_cwnd_packets,
             send_fec,
+            receive_fec,
         }
     }
 }
@@ -247,6 +250,7 @@ impl Default for CommonArgs {
             qpack_blocked_streams: None,
             initial_cwnd_packets: 10,
             send_fec: false,
+            receive_fec: false,
         }
     }
 }
@@ -294,6 +298,7 @@ Options:
   --source-port PORT       Source port to use when connecting to the server [default: 0].
   --initial-cwnd-packets PACKETS   The initial congestion window size in terms of packet count [default: 10].
   --send-fec               Sends FEC to protect the STREAM and DATAGRAM frames
+  --receive-fec            Processes FEC data to protect the received STREAM and DATAGRAM frames
   -h --help                Show this screen.
 ";
 
