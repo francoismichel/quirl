@@ -123,6 +123,7 @@ fn main() {
     config.set_max_stream_window(conn_args.max_stream_window);
 
     config.send_fec(conn_args.send_fec);
+    config.receive_fec(conn_args.receive_fec);
 
     let mut keylog = None;
 

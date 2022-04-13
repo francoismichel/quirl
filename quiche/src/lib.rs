@@ -716,7 +716,8 @@ pub struct Config {
 
     disable_dcid_reuse: bool,
 
-    fec: bool,
+    emit_fec: bool,
+    receive_fec: bool,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -776,7 +777,8 @@ impl Config {
 
             disable_dcid_reuse: false,
 
-            fec: false,
+            emit_fec: false,
+            receive_fec: false,
         })
     }
 
@@ -1190,7 +1192,12 @@ impl Config {
 
     /// decides whether FEC should be sent to protect data
     pub fn send_fec(&mut self, v: bool) {
-        self.fec = v;
+        self.emit_fec = v;
+    }
+
+    /// decides whether REPAIR frames should be processed to recover data
+    pub fn receive_fec(&mut self, v: bool) {
+        self.receive_fec = v;
     }
 }
 
@@ -1375,6 +1382,7 @@ pub struct Connection {
     fec_encoder: networkcoding::Encoder,
     fec_decoder: networkcoding::Decoder,
     emit_fec: bool,
+    receive_fec: bool,
     fec_scheduler: fec::fec_scheduler::FECScheduler,
 
     /// Whether to emit DATAGRAM frames in the next packet.
@@ -1821,7 +1829,8 @@ impl Connection {
             fec_decoder: networkcoding::Decoder::RLC(RLCDecoder::new(1280, 5000)),
             fec_scheduler: fec::fec_scheduler::new_background_scheduler(),
 
-            emit_fec: config.fec,
+            emit_fec: config.emit_fec,
+            receive_fec: config.receive_fec,
         };
 
         // Don't support multipath with zero-length CIDs.
@@ -2605,7 +2614,7 @@ impl Connection {
             let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &self.fec_decoder)?;
             let offset_after_frame_processing = payload.off();
 
-            if frame.fec_protected() {
+            if self.receive_fec && frame.fec_protected() {
                 source_symbol_data.extend_from_slice(&payload.buf()[offset_before_frame_processing..offset_after_frame_processing]);
             }
 
@@ -2628,23 +2637,25 @@ impl Connection {
             }
         }
 
-        let current_len = source_symbol_data.len();
-        let symbol_size = self.fec_encoder.symbol_size();
-        if current_len < symbol_size {
-            source_symbol_data.resize(symbol_size, 0);
-            // put the padding in front
-            source_symbol_data.rotate_right(symbol_size - current_len);
-        }
+        if self.receive_fec && hdr.ty == Type::Short {
+            let current_len = source_symbol_data.len();
+            let symbol_size = self.fec_encoder.symbol_size();
+            if current_len < symbol_size {
+                source_symbol_data.resize(symbol_size, 0);
+                // put the padding in front
+                source_symbol_data.rotate_right(symbol_size - current_len);
+            }
 
-        let decoded_symbols = self.fec_decoder.receive_source_symbol(SourceSymbol::new(
+            let decoded_symbols = self.fec_decoder.receive_source_symbol(SourceSymbol::new(
                                                         source_symbol_metadata_from_u64(pn),
-                                                                source_symbol_data
-                                                            )
-                                                )?;
+                                                        source_symbol_data
+                                                   )
+            )?;
 
-        for decoded_symbol in decoded_symbols {
-            trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
-            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, &hdr, recv_pid)?;
+            for decoded_symbol in decoded_symbols {
+                trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
+                self.process_frames_of_source_symbol(decoded_symbol, now, epoch, &hdr, recv_pid)?;
+            }
         }
 
         qlog_with_type!(QLOG_PACKET_RX, self.qlog, q, {
@@ -3514,6 +3525,7 @@ impl Connection {
         packet::encode_pkt_num(pn, &mut b)?;
 
         let payload_offset = b.off();
+
         let mut challenge_data = None;
 
         if pkt_type == packet::Type::Short {
@@ -4077,6 +4089,7 @@ impl Connection {
             do_dgram = true;
         }
 
+
         if self.emit_fec && (do_dgram || stream_to_emit) {
             // add PADDING frames to contain the repair frame afterwards
             let n_padding_for_fec = std::cmp::min(32, left);
@@ -4091,8 +4104,8 @@ impl Connection {
             }
         }
 
-        // Create REPAIR frame.else
-        if pkt_type == packet::Type::Short
+        // Create REPAIR frame.
+        if self.emit_fec && pkt_type == packet::Type::Short
             && self.fec_scheduler.should_send_repair(self, self.paths.get(send_pid)?, self.fec_encoder.symbol_size())
             && self.fec_encoder.can_send_repair_symbols() {
             let frame = frame::Frame::Repair {
@@ -4105,6 +4118,10 @@ impl Connection {
             } else {
                 return Err(BufferTooShort);
             }
+        }
+
+        if self.emit_fec && pkt_type == packet::Type::Short {
+            left = std::cmp::min(left, self.fec_encoder.symbol_size().saturating_sub(b.off() - payload_offset));
         }
 
         // Create DATAGRAM frame.
@@ -6764,7 +6781,7 @@ impl Connection {
                 self.paths.has_path_status() ||
                 send_path.needs_ack_eliciting ||
                 send_path.probing_required() ||
-                self.fec_scheduler.should_send_repair(self,send_path, self.fec_encoder.symbol_size()))
+                (self.emit_fec && self.fec_scheduler.should_send_repair(self,send_path, self.fec_encoder.symbol_size())))
         {
             // Only clients can send 0-RTT packets.
             if !self.is_server && self.is_in_early_data() {

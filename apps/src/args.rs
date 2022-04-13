@@ -57,6 +57,7 @@ pub struct CommonArgs {
     pub qpack_blocked_streams: Option<u64>,
     pub multipath: bool,
     pub send_fec: bool,
+    pub receive_fec: bool,
 }
 
 /// Creates a new `CommonArgs` structure using the provided [`Docopt`].
@@ -192,6 +193,7 @@ impl Args for CommonArgs {
                 None
             };
         let send_fec = args.get_bool("--send-fec");
+        let receive_fec = args.get_bool("--receive-fec");
 
         let multipath = args.get_bool("--multipath");
 
@@ -219,6 +221,7 @@ impl Args for CommonArgs {
             qpack_blocked_streams,
             multipath,
             send_fec,
+            receive_fec,
         }
     }
 }
@@ -249,6 +252,7 @@ impl Default for CommonArgs {
             qpack_blocked_streams: None,
             multipath: false,
             send_fec: false,
+            receive_fec: false,
         }
     }
 }
@@ -296,6 +300,7 @@ Options:
   --session-file PATH      File used to cache a TLS session for resumption.
   --source-port PORT       Source port to use when connecting to the server [default: 0].
   --send-fec               Sends FEC to protect the STREAM and DATAGRAM frames
+  --receive-fec            Processes FEC data to protect the received STREAM and DATAGRAM frames
   -h --help                Show this screen.
 ";
 
