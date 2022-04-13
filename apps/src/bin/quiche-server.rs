@@ -126,6 +126,7 @@ fn main() {
 
     config.enable_pacing(pacing);
     config.send_fec(conn_args.send_fec);
+    config.receive_fec(conn_args.receive_fec);
 
     let mut keylog = None;
 
