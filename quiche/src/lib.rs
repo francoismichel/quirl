@@ -2275,8 +2275,9 @@ impl Connection {
         let mut source_symbol_payload = octets::Octets::with_slice(data.as_slice());
         while source_symbol_payload.cap() > 0 {
             let frame = frame::Frame::from_bytes(&mut source_symbol_payload, packet::Type::Short, &self.fec_decoder)?;
+            // FIXME: we currently give the current active path to process_frame, but the frame has been recovered through FEC
             self.process_frame(frame, hdr, recv_path_id, epoch, now)?;
-            //TODO: log the decdoded source symbol & announce its recovery to the sender
+            // TODO: log the decoded source symbol & announce its recovery to the sender
         }
         Ok(())
     }
