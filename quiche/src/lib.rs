@@ -382,6 +382,8 @@
 #[macro_use]
 extern crate log;
 
+use networkcoding::EncoderError;
+use networkcoding::SourceSymbolMetadata;
 #[cfg(feature = "qlog")]
 use qlog::events::connectivity::TransportOwner;
 #[cfg(feature = "qlog")]
@@ -1463,6 +1465,7 @@ pub struct Connection {
 
     fec_encoder: networkcoding::Encoder,
     fec_decoder: networkcoding::Decoder,
+    latest_metadata_of_symbol_with_fec_protected_frames: Option<SourceSymbolMetadata>,
     emit_fec: bool,
     receive_fec: bool,
     fec_scheduler: fec::fec_scheduler::FECScheduler,
@@ -1911,6 +1914,7 @@ impl Connection {
             fec_encoder: networkcoding::Encoder::RLC(RLCEncoder::new(1280, 5000, 42)),
             fec_decoder: networkcoding::Decoder::RLC(RLCDecoder::new(1280, 5000)),
             fec_scheduler: fec::fec_scheduler::new_background_scheduler(),
+            latest_metadata_of_symbol_with_fec_protected_frames: None,
 
             newly_acked: Vec::new(),
 
@@ -2995,6 +2999,9 @@ impl Connection {
                                         .remove_until(largest_acked)
                                 })
                                 .ok();
+                            if self.receive_fec {
+                                self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(largest_acked));
+                            }
                         }
                     },
 
@@ -4379,15 +4386,25 @@ impl Connection {
         if self.emit_fec && pkt_type == packet::Type::Short
             && self.fec_scheduler.should_send_repair(self, self.paths.get(send_pid)?, self.fec_encoder.symbol_size())
             && self.fec_encoder.can_send_repair_symbols() {
-            let frame = frame::Frame::Repair {
-                repair_symbol: self.fec_encoder.generate_and_serialize_repair_symbol()?,
-            };
-            if push_frame_to_pkt!(b, frames, frame, left) {
-                in_flight = true;
-                self.fec_scheduler.sent_repair_symbol();
-                ack_eliciting = true;
-            } else {
-                return Err(BufferTooShort);
+            if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
+                match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
+                    Ok(rs) => {
+                        let frame = frame::Frame::Repair {
+                            repair_symbol: rs,
+                        };
+                        if push_frame_to_pkt!(b, frames, frame, left) {
+                            in_flight = true;
+                            self.fec_scheduler.sent_repair_symbol();
+                            ack_eliciting = true;
+                        } else {
+                            return Err(BufferTooShort);
+                        }
+                    }
+                    Err(EncoderError::NoSymbolToGenerate) => (),    // because generate_up_to may not be able to generate even if can_generate returned true
+                    Err(err) => {
+                        return Err(Error::from(err));
+                    }
+                }
             }
         }
 
@@ -4692,11 +4709,14 @@ impl Connection {
             let payload_buf = &b.buf()[payload_offset..payload_offset + payload_len];
             let mut written_frames = octets::Octets::with_slice(payload_buf);
 
+            let mut packet_fec_protected = false;
+
             while written_frames.cap() > 0 {
                 let off_before_parsing = written_frames.off();
                 let frame = frame::Frame::from_bytes(&mut written_frames, hdr_ty, &self.fec_decoder)?;
                 let wire_len = written_frames.off() - off_before_parsing;
                 if frame.fec_protected() {
+                    packet_fec_protected = true;
                     let written = frame.to_bytes(&mut fec_buffer)?;
                     if written != wire_len {
                         return Err(SourceSymbolCreationError);
@@ -4712,6 +4732,10 @@ impl Connection {
 
             if pn != source_symbol_metadata_to_u64(source_symbol_metadata) {
                 return Err(Error::BadSymbolID);
+            }
+
+            if packet_fec_protected {
+                self.latest_metadata_of_symbol_with_fec_protected_frames = Some(source_symbol_metadata);
             }
         }
 
@@ -7281,6 +7305,16 @@ impl Connection {
 
                         self.lost_count += lost_packets;
                         self.lost_bytes += lost_bytes as u64;
+                    }
+                }
+
+                if self.handshake_confirmed {
+                    self.drop_epoch_state(packet::Epoch::Handshake, now);
+                }
+
+                if self.emit_fec {
+                    if let Some(largest_acked) = ranges.last() {
+                        self.fec_encoder.remove_up_to(source_symbol_metadata_from_u64(largest_acked));
                     }
                 }
             },
