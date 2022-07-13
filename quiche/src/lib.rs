@@ -2899,27 +2899,6 @@ impl Connection {
             }
         }
 
-        if self.receive_fec && hdr.ty == Type::Short {
-            let current_len = source_symbol_data.len();
-            let symbol_size = self.fec_encoder.symbol_size();
-            if current_len < symbol_size {
-                source_symbol_data.resize(symbol_size, 0);
-                // put the padding in front
-                source_symbol_data.rotate_right(symbol_size - current_len);
-            }
-
-            let decoded_symbols = self.fec_decoder.receive_source_symbol(SourceSymbol::new(
-                                                        source_symbol_metadata_from_u64(pn),
-                                                        source_symbol_data
-                                                   )
-            )?;
-
-            for decoded_symbol in decoded_symbols {
-                trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
-                self.process_frames_of_source_symbol(decoded_symbol, now, epoch, &hdr, recv_pid)?;
-            }
-        }
-
         qlog_with_type!(QLOG_PACKET_RX, self.qlog, q, {
             let packet_size = b.len();
 
@@ -4425,6 +4404,7 @@ impl Connection {
                 warn!("could not add ID frame: buffer too short");
             }
         }
+        let source_symbol_offset = b.off();
 
         // Create DATAGRAM frame.
         if (pkt_type == packet::Type::Short || pkt_type == packet::Type::ZeroRTT) &&
@@ -4720,8 +4700,10 @@ impl Connection {
 
             // This is the best way I found to avoid modifying too much the packetization code
             // of the stream frames
-            let payload_buf = &b.buf()[payload_offset..payload_offset + payload_len];
-            let mut written_frames = octets::Octets::with_slice(payload_buf);
+            let unprotected_frames_data_len = source_symbol_offset - payload_offset;
+            let source_symbol_len = payload_len - unprotected_frames_data_len;
+            let protected_data_buf = &b.buf()[source_symbol_offset..source_symbol_offset + source_symbol_len];
+            let mut written_frames = octets::Octets::with_slice(protected_data_buf);
 
             let mut packet_fec_protected = false;
 
