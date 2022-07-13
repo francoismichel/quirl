@@ -3513,6 +3513,7 @@ impl Connection {
 
         let mut ack_eliciting = false;
         let mut in_flight = false;
+        let mut fec_protected = false;
         let mut has_data = false;
 
         // Whether or not we should explicitly elicit an ACK via PING frame if we
@@ -4140,6 +4141,13 @@ impl Connection {
 
         if self.emit_fec && pkt_type == packet::Type::Short {
             left = std::cmp::min(left, self.fec_encoder.symbol_size().saturating_sub(b.off() - payload_offset));
+            let frame = frame::Frame::SourceSymbolHeader { metadata: self.fec_encoder.next_metadata()? };
+            if push_frame_to_pkt!(b, frames, frame, left) {
+                in_flight = true;
+                fec_protected = true;
+            } else {
+                return Err(BufferTooShort);
+            }
         }
 
         // Create DATAGRAM frame.
@@ -4429,11 +4437,11 @@ impl Connection {
         }
 
 
-        // FIXME: to avoid inserting FEC infide quiche's code too much,
+        // FIXME: to avoid inserting FEC inside quiche's code too much,
         //        we simply rewrite the frames into the FEC buffer, although
         //        we could have copied it in push_frame_to_pkt!() directly
 
-        if self.emit_fec && hdr_ty == packet::Type::Short {
+        if fec_protected {
             let symbol_size = self.fec_encoder.symbol_size();
             // zeroes at the beginning to add PADDING frames at the front of the symbol (they are not sent in the packet)
             let mut source_symbol_data = vec![0; symbol_size];
@@ -4441,7 +4449,7 @@ impl Connection {
 
 
             // We here re-read the written payload to include it inside the source symbol
-            // We cannot browse through the frames vector ar Stream frames are not completely
+            // We cannot browse through the frames vector as Stream frames are not completely
             // stored in it but a StreamHeader is stored instead...
 
             // This is the best way I found to avoid modifying too much the packetization code
@@ -7359,6 +7367,21 @@ impl Connection {
                     }
                 }
             },
+
+
+            frame::Frame::SourceSymbol { source_symbol } => {
+                match self.fec_decoder.receive_source_symbol(source_symbol) {
+                    Err(err) => return Err(Error::from(err)),
+                    Ok(decoded_symbols) => {
+                        for decoded_symbol in decoded_symbols {
+                            trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
+                            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                        }
+                    }
+                }
+            },
+
+            frame::Frame::SourceSymbolHeader { .. } => unreachable!(),
             frame::Frame::DatagramHeader { .. } => unreachable!(),
 
             frame::Frame::ACKMP {
