@@ -700,7 +700,7 @@ impl Frame {
                 // but we would loose some view on what the packet contains and it would require many changes to recover that
                 b.put_varint(0x33)?;
                 b.put_bytes(&source_symbol.metadata())?;
-                b.put_bytes(&source_symbol.get())?;
+                b.put_bytes(source_symbol.get())?;
             }
         }
 
@@ -956,7 +956,9 @@ impl Frame {
                 Frame::ACK { .. } |
                 Frame::ApplicationClose { .. } |
                 Frame::ConnectionClose { .. } |
-                Frame::ACKMP { .. }
+                Frame::ACKMP { .. } |
+                Frame::SourceSymbol { .. } |
+                Frame::SourceSymbolHeader { .. }
         )
     }
 
