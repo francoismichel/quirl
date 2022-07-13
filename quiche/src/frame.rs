@@ -25,6 +25,7 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use std::convert::TryInto;
+use networkcoding::{SourceSymbolMetadata, SourceSymbol, source_symbol_metadata_to_u64};
 use networkcoding::{Decoder, RepairSymbol};
 
 use crate::Error;
@@ -182,6 +183,14 @@ pub enum Frame {
     Repair {
         repair_symbol: RepairSymbol,
     },
+
+    SourceSymbolHeader {
+        metadata: SourceSymbolMetadata,
+    },
+
+    SourceSymbol {
+        source_symbol: SourceSymbol,
+    }
 }
 
 impl Frame {
@@ -317,6 +326,17 @@ impl Frame {
                 b.skip(read)?;
                 Frame::Repair {
                     repair_symbol,
+                }
+            },
+            0x33 => {
+                let symbol_size = nc_decoder.symbol_size();
+                let (read, source_symbol_metadata) = nc_decoder.read_source_symbol_metadata(b.as_ref())?;
+                b.skip(read)?;
+                let mut source_symbol_data = vec![0; symbol_size];
+                // copy the remaining payload but be careful to place padding at the start of the symbol if the remaining paylaod does not match the symbol size
+                source_symbol_data[symbol_size - b.as_ref().len()..].copy_from_slice(b.as_ref());
+                Frame::SourceSymbol {
+                    source_symbol: SourceSymbol::new(source_symbol_metadata, source_symbol_data),
                 }
             },
 
@@ -586,6 +606,21 @@ impl Frame {
                 b.put_varint(0x32)?;
                 b.put_bytes(repair_symbol.get())?;
             }
+            Frame::SourceSymbolHeader { metadata } => {
+                // the source symbol frame only writes its metadata and we expect next protected frames to be written afterwards
+                // This is weird, the best would be to wrap the protected frames inside the source symbol frame
+                // but we would loose some view on what the packet contains and it would require many changes to recover that
+                b.put_varint(0x33)?;
+                b.put_bytes(metadata)?;
+            }
+            Frame::SourceSymbol { source_symbol } => {
+                // the source symbol frame only writes its metadata and we expect next protected frames to be written afterwards
+                // This is weird, the best would be to wrap the protected frames inside the source symbol frame
+                // but we would loose some view on what the packet contains and it would require many changes to recover that
+                b.put_varint(0x33)?;
+                b.put_bytes(&source_symbol.metadata())?;
+                b.put_bytes(&source_symbol.get())?;
+            }
         }
 
         Ok(before - b.cap())
@@ -804,6 +839,17 @@ impl Frame {
 
             Frame::Repair { repair_symbol } => {
                 repair_symbol.wire_len()
+            },
+
+            Frame::SourceSymbolHeader { metadata } => {
+                1 + // frame type
+                metadata.len() // metadata
+            },
+
+            Frame::SourceSymbol { source_symbol } => {
+                1 + // frame type
+                source_symbol.metadata().len() + // metadata
+                source_symbol.get().len()
             },
         }
     }
@@ -1031,6 +1077,18 @@ impl Frame {
                 raw_length: Some(repair_symbol.wire_len() as u32),
                 raw: None,
             },
+
+            Frame::SourceSymbolHeader { metadata } => QuicFrame::Unknown {
+                raw_frame_type: 0x33,
+                raw_length: Some(metadata.len() as u32),
+                raw: None,
+            },
+
+            Frame::SourceSymbol { source_symbol } => QuicFrame::Unknown {
+                raw_frame_type: 0x33,
+                raw_length: Some(source_symbol.metadata().len() as u32),
+                raw: None,
+            },
         }
     }
 }
@@ -1201,6 +1259,14 @@ impl std::fmt::Debug for Frame {
 
             Frame::Repair { repair_symbol } => {
                 write!(f, "REPAIR len={}", repair_symbol.wire_len())?;
+            },
+
+            Frame::SourceSymbolHeader { metadata } => {
+                write!(f, "SOURCE_SYMBOL, metadata={} len={}", source_symbol_metadata_to_u64(*metadata), metadata.len())?;
+            },
+
+            Frame::SourceSymbol { source_symbol } => {
+                write!(f, "SOURCE_SYMBOL, metadata={} len={}", source_symbol_metadata_to_u64(source_symbol.metadata()), source_symbol.metadata().len())?;
             },
         }
 
