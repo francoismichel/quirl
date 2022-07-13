@@ -4419,14 +4419,19 @@ impl Connection {
             }
         }
 
-        if self.emit_fec && pkt_type == packet::Type::Short {
+        if self.emit_fec && pkt_type == packet::Type::Short && (do_dgram || stream_to_emit)  {
             left = std::cmp::min(left, self.fec_encoder.symbol_size().saturating_sub(b.off() - payload_offset));
             let frame = frame::Frame::SourceSymbolHeader { metadata: self.fec_encoder.next_metadata()? };
-            if push_frame_to_pkt!(b, frames, frame, left) {
-                in_flight = true;
-                fec_protected = true;
+            if frame.wire_len() < left {
+                if push_frame_to_pkt!(b, frames, frame, left) {
+                    in_flight = true;
+                    fec_protected = true;
+                } else {
+                    error!("buffer too short when adding ID frame");
+                    return Err(BufferTooShort);
+                }
             } else {
-                return Err(BufferTooShort);
+                warn!("could not add ID frame: buffer too short");
             }
         }
 
@@ -4738,6 +4743,7 @@ impl Connection {
 
             let mut packet_fec_protected = false;
 
+
             while written_frames.cap() > 0 {
                 let off_before_parsing = written_frames.off();
                 let frame = frame::Frame::from_bytes(&mut written_frames, hdr_ty, &self.fec_decoder)?;
@@ -4746,6 +4752,7 @@ impl Connection {
                     packet_fec_protected = true;
                     let written = frame.to_bytes(&mut fec_buffer)?;
                     if written != wire_len {
+                        error!("FEC: did not write the correct amount of bytes");
                         return Err(SourceSymbolCreationError);
                     }
                 }
@@ -4756,10 +4763,6 @@ impl Connection {
             source_symbol_data.rotate_right(symbol_size - offset);
             let mut source_symbol_metadata = source_symbol_metadata_from_u64(0);
             self.fec_encoder.protect_data(source_symbol_data, &mut source_symbol_metadata)?;
-
-            if pn != source_symbol_metadata_to_u64(source_symbol_metadata) {
-                return Err(Error::BadSymbolID);
-            }
 
             if packet_fec_protected {
                 self.latest_metadata_of_symbol_with_fec_protected_frames = Some(source_symbol_metadata);
