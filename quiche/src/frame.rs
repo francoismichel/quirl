@@ -935,14 +935,6 @@ impl Frame {
                 Frame::PathResponse { .. }
         )
     }
-    
-    pub fn fec_protected(&self) -> bool {
-        // Any other frame is fec-protected (note the `!`).
-        self.ack_eliciting() && !matches!(
-            self,
-            Frame::Repair { .. },
-        )
-    }
 
     #[cfg(feature = "qlog")]
     pub fn to_qlog(&self) -> QuicFrame {
