@@ -2876,7 +2876,7 @@ impl Connection {
             let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &self.fec_decoder)?;
             let offset_after_frame_processing = payload.off();
 
-            if self.receive_fec && frame.fec_protected() {
+            if self.receive_fec {
                 source_symbol_data.extend_from_slice(&payload.buf()[offset_before_frame_processing..offset_after_frame_processing]);
             }
 
@@ -4712,13 +4712,11 @@ impl Connection {
                 let off_before_parsing = written_frames.off();
                 let frame = frame::Frame::from_bytes(&mut written_frames, hdr_ty, &self.fec_decoder)?;
                 let wire_len = written_frames.off() - off_before_parsing;
-                if frame.fec_protected() {
-                    packet_fec_protected = true;
-                    let written = frame.to_bytes(&mut fec_buffer)?;
-                    if written != wire_len {
-                        error!("FEC: did not write the correct amount of bytes");
-                        return Err(SourceSymbolCreationError);
-                    }
+                packet_fec_protected = true;
+                let written = frame.to_bytes(&mut fec_buffer)?;
+                if written != wire_len {
+                    error!("FEC: did not write the correct amount of bytes");
+                    return Err(SourceSymbolCreationError);
                 }
             }
 
