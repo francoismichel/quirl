@@ -4358,7 +4358,16 @@ impl Connection {
         }
 
 
-        if self.emit_fec && (do_dgram || stream_to_emit) {
+        let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?}.wire_len();
+        let should_protect_packet = self.emit_fec 
+                                    && !is_closing 
+                                    && self.paths.get(send_pid)?.active() 
+                                    && pkt_type == packet::Type::Short
+                                    && ((left > max_fec_overhead + 1 + frame::MAX_DGRAM_OVERHEAD + self.dgram_send_queue.peek_front_len().unwrap_or(left + 1) && do_dgram) // enough space to write a datagram frame and its content
+                                        || (left > max_fec_overhead + 1 + frame::MAX_STREAM_OVERHEAD && stream_to_emit)); // enough space to write a stream frame
+
+
+        if should_protect_packet {
             // add PADDING frames to contain the repair frame afterwards
             let n_padding_for_fec = std::cmp::min(32, left);
 
@@ -4398,7 +4407,7 @@ impl Connection {
             }
         }
 
-        if self.emit_fec && pkt_type == packet::Type::Short && (do_dgram || stream_to_emit)  {
+        if should_protect_packet {
             left = std::cmp::min(left, self.fec_encoder.symbol_size().saturating_sub(b.off() - payload_offset));
             let frame = frame::Frame::SourceSymbolHeader { metadata: self.fec_encoder.next_metadata()? };
             if frame.wire_len() < left {
