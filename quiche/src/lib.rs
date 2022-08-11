@@ -4368,17 +4368,7 @@ impl Connection {
 
 
         if should_protect_packet {
-            // add PADDING frames to contain the repair frame afterwards
-            let n_padding_for_fec = std::cmp::min(32, left);
-
-            let frame = frame::Frame::Padding { len: n_padding_for_fec };
-
-            trace!("add {} bytes of padding for FEC", n_padding_for_fec);
-            if push_frame_to_pkt!(b, frames, frame, left) {
-                in_flight = true;
-            } else {
-                return Err(BufferTooShort);
-            }
+            left -= std::cmp::min(32, left)
         }
 
         // Create REPAIR frame.
