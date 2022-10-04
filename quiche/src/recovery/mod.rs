@@ -74,6 +74,19 @@ const PACING_MULTIPLIER: f64 = 1.25;
 // an ACK.
 const MAX_OUTSTANDING_NON_ACK_ELICITING: usize = 24;
 
+pub type SpaceId = u32;
+pub type PktNum = u64;
+
+/// A packet number preceded by its space identifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SpacedPktNum(SpaceId, PktNum);
+
+impl SpacedPktNum {
+    pub fn new(space_id: SpaceId, pkt_num: PktNum) -> Self {
+        Self(space_id, pkt_num)
+    }
+}
+
 pub struct Recovery {
     loss_detection_timer: Option<Instant>,
 
@@ -82,9 +95,9 @@ pub struct Recovery {
     time_of_last_sent_ack_eliciting_pkt:
         [Option<Instant>; packet::Epoch::count()],
 
-    largest_acked_pkt: [u64; packet::Epoch::count()],
+    largest_acked_pkt: [SpacedPktNum; packet::Epoch::count()],
 
-    largest_sent_pkt: [u64; packet::Epoch::count()],
+    largest_sent_pkt: [SpacedPktNum; packet::Epoch::count()],
 
     latest_rtt: Duration,
 
@@ -114,6 +127,8 @@ pub struct Recovery {
 
     in_flight_count: [usize; packet::Epoch::count()],
 
+    pub rtt_update_count: usize,
+
     app_limited: bool,
 
     delivery_rate: delivery_rate::Rate,
@@ -135,7 +150,7 @@ pub struct Recovery {
 
     bytes_acked_ca: usize,
 
-    bytes_sent: usize,
+    pub bytes_sent: usize,
 
     pub bytes_lost: u64,
 
@@ -200,9 +215,10 @@ impl Recovery {
 
             time_of_last_sent_ack_eliciting_pkt: [None; packet::Epoch::count()],
 
-            largest_acked_pkt: [std::u64::MAX; packet::Epoch::count()],
+            largest_acked_pkt: [SpacedPktNum(SpaceId::MAX, PktNum::MAX);
+                packet::Epoch::count()],
 
-            largest_sent_pkt: [0; packet::Epoch::count()],
+            largest_sent_pkt: [SpacedPktNum(0, 0); packet::Epoch::count()],
 
             latest_rtt: Duration::ZERO,
 
@@ -242,6 +258,8 @@ impl Recovery {
             time_thresh: INITIAL_TIME_THRESHOLD,
 
             bytes_in_flight: 0,
+
+            rtt_update_count: 0,
 
             ssthresh: std::usize::MAX,
 
@@ -414,12 +432,13 @@ impl Recovery {
         self.pacer.send(sent_bytes, now);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn on_ack_received(
-        &mut self, ranges: &ranges::RangeSet, ack_delay: u64,
+        &mut self, space_id: SpaceId, ranges: &ranges::RangeSet, ack_delay: u64,
         epoch: packet::Epoch, handshake_status: HandshakeStatus, now: Instant,
         trace_id: &str,
     ) -> Result<(usize, usize)> {
-        let largest_acked = ranges.last().unwrap();
+        let largest_acked = SpacedPktNum(space_id, ranges.last().unwrap());
 
         // While quiche used to consider ACK frames acknowledging packet numbers
         // larger than the largest sent one as invalid, this is not true anymore
@@ -428,7 +447,9 @@ impl Recovery {
         // a validating path, then receives an acknowledgment for that packet on
         // the active one.
 
-        if self.largest_acked_pkt[epoch] == std::u64::MAX {
+        if self.largest_acked_pkt[epoch] ==
+            SpacedPktNum(SpaceId::MAX, PktNum::MAX)
+        {
             self.largest_acked_pkt[epoch] = largest_acked;
         } else {
             self.largest_acked_pkt[epoch] =
@@ -437,7 +458,7 @@ impl Recovery {
 
         let mut has_ack_eliciting = false;
 
-        let mut largest_newly_acked_pkt_num = 0;
+        let mut largest_newly_acked_pkt_num = SpacedPktNum(0, 0);
         let mut largest_newly_acked_sent_time = now;
 
         let mut newly_acked = Vec::new();
@@ -449,8 +470,8 @@ impl Recovery {
         // Detect and mark acked packets, without removing them from the sent
         // packets list.
         for r in ranges.iter() {
-            let lowest_acked_in_block = r.start;
-            let largest_acked_in_block = r.end - 1;
+            let lowest_acked_in_block = SpacedPktNum(space_id, r.start);
+            let largest_acked_in_block = SpacedPktNum(space_id, r.end - 1);
 
             let unacked_iter = self.sent[epoch]
                 .iter_mut()
@@ -467,8 +488,9 @@ impl Recovery {
                 // Check if acked packet was already declared lost.
                 if unacked.time_lost.is_some() {
                     // Calculate new packet reordering threshold.
-                    let pkt_thresh =
-                        self.largest_acked_pkt[epoch] - unacked.pkt_num + 1;
+                    let pkt_thresh = (self.largest_acked_pkt[epoch].1 -
+                        unacked.pkt_num.1 +
+                        1) as u64;
                     let pkt_thresh = cmp::min(MAX_PACKET_THRESHOLD, pkt_thresh);
 
                     self.pkt_thresh = cmp::max(self.pkt_thresh, pkt_thresh);
@@ -525,7 +547,7 @@ impl Recovery {
                     is_app_limited: unacked.is_app_limited,
                 });
 
-                trace!("{} packet newly acked {}", trace_id, unacked.pkt_num);
+                trace!("{} packet newly acked {:?}", trace_id, unacked.pkt_num);
             }
         }
 
@@ -722,6 +744,7 @@ impl Recovery {
     fn update_rtt(
         &mut self, latest_rtt: Duration, ack_delay: Duration, now: Instant,
     ) {
+        self.rtt_update_count += 1;
         self.latest_rtt = latest_rtt;
 
         match self.smoothed_rtt {
@@ -875,7 +898,7 @@ impl Recovery {
         for unacked in unacked_iter {
             // Mark packet as lost, or set time when it should be marked.
             if unacked.time_sent <= lost_send_time ||
-                largest_acked >= unacked.pkt_num + self.pkt_thresh
+                largest_acked.1 >= unacked.pkt_num.1 + self.pkt_thresh
             {
                 self.lost[epoch].append(&mut unacked.frames);
 
@@ -892,7 +915,7 @@ impl Recovery {
                         self.in_flight_count[epoch].saturating_sub(1);
 
                     trace!(
-                        "{} packet {} lost on epoch {}",
+                        "{} packet {:?} lost on epoch {}",
                         trace_id,
                         unacked.pkt_num,
                         epoch
@@ -979,7 +1002,9 @@ impl Recovery {
         }
     }
 
-    fn in_persistent_congestion(&mut self, _largest_lost_pkt_num: u64) -> bool {
+    fn in_persistent_congestion(
+        &mut self, _largest_lost_pkt_num: SpacedPktNum,
+    ) -> bool {
         let _congestion_period = self.pto() * PERSISTENT_CONGESTION_THRESHOLD;
 
         // TODO: properly detect persistent congestion
@@ -1173,7 +1198,7 @@ impl std::fmt::Debug for Recovery {
 
 #[derive(Clone)]
 pub struct Sent {
-    pub pkt_num: u64,
+    pub pkt_num: SpacedPktNum,
 
     pub frames: Vec<frame::Frame>,
 
@@ -1210,6 +1235,8 @@ impl std::fmt::Debug for Sent {
         write!(f, "first_sent_time={:?} ", self.first_sent_time)?;
         write!(f, "is_app_limited={} ", self.is_app_limited)?;
         write!(f, "has_data={} ", self.has_data)?;
+        write!(f, "time_acked={:?} ", self.time_acked)?;
+        write!(f, "time_lost={:?} ", self.time_lost)?;
 
         Ok(())
     }
@@ -1217,7 +1244,7 @@ impl std::fmt::Debug for Sent {
 
 #[derive(Clone)]
 pub struct Acked {
-    pub pkt_num: u64,
+    pub pkt_num: SpacedPktNum,
 
     pub time_sent: Instant,
 
@@ -1421,7 +1448,7 @@ mod tests {
 
         // Start by sending a few packets.
         let p = Sent {
-            pkt_num: 0,
+            pkt_num: SpacedPktNum(0, 0),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1447,7 +1474,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 1000);
 
         let p = Sent {
-            pkt_num: 1,
+            pkt_num: SpacedPktNum(0, 1),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1473,7 +1500,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 2000);
 
         let p = Sent {
-            pkt_num: 2,
+            pkt_num: SpacedPktNum(0, 2),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1499,7 +1526,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 3000);
 
         let p = Sent {
-            pkt_num: 3,
+            pkt_num: SpacedPktNum(0, 3),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1533,6 +1560,7 @@ mod tests {
 
         assert_eq!(
             r.on_ack_received(
+                0,
                 &acked,
                 25,
                 packet::Epoch::Application,
@@ -1557,7 +1585,7 @@ mod tests {
         assert_eq!(r.pto_count, 1);
 
         let p = Sent {
-            pkt_num: 4,
+            pkt_num: SpacedPktNum(0, 4),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1583,7 +1611,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 3000);
 
         let p = Sent {
-            pkt_num: 5,
+            pkt_num: SpacedPktNum(0, 5),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1618,6 +1646,7 @@ mod tests {
 
         assert_eq!(
             r.on_ack_received(
+                0,
                 &acked,
                 25,
                 packet::Epoch::Application,
@@ -1654,7 +1683,7 @@ mod tests {
 
         // Start by sending a few packets.
         let p = Sent {
-            pkt_num: 0,
+            pkt_num: SpacedPktNum(0, 0),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1680,7 +1709,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 1000);
 
         let p = Sent {
-            pkt_num: 1,
+            pkt_num: SpacedPktNum(0, 1),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1706,7 +1735,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 2000);
 
         let p = Sent {
-            pkt_num: 2,
+            pkt_num: SpacedPktNum(0, 2),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1732,7 +1761,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 3000);
 
         let p = Sent {
-            pkt_num: 3,
+            pkt_num: SpacedPktNum(0, 3),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1767,6 +1796,7 @@ mod tests {
 
         assert_eq!(
             r.on_ack_received(
+                0,
                 &acked,
                 25,
                 packet::Epoch::Application,
@@ -1814,7 +1844,7 @@ mod tests {
 
         // Start by sending a few packets.
         let p = Sent {
-            pkt_num: 0,
+            pkt_num: SpacedPktNum(0, 0),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1840,7 +1870,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 1000);
 
         let p = Sent {
-            pkt_num: 1,
+            pkt_num: SpacedPktNum(0, 1),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1866,7 +1896,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 2000);
 
         let p = Sent {
-            pkt_num: 2,
+            pkt_num: SpacedPktNum(0, 2),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1892,7 +1922,7 @@ mod tests {
         assert_eq!(r.bytes_in_flight, 3000);
 
         let p = Sent {
-            pkt_num: 3,
+            pkt_num: SpacedPktNum(0, 3),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -1926,6 +1956,7 @@ mod tests {
 
         assert_eq!(
             r.on_ack_received(
+                0,
                 &acked,
                 25,
                 packet::Epoch::Application,
@@ -1936,7 +1967,7 @@ mod tests {
             Ok((1, 1000))
         );
 
-        now += Duration::from_millis(10);
+        now += Duration::from_millis(9);
 
         let mut acked = ranges::RangeSet::default();
         acked.insert(0..2);
@@ -1945,6 +1976,7 @@ mod tests {
 
         assert_eq!(
             r.on_ack_received(
+                0,
                 &acked,
                 25,
                 packet::Epoch::Application,
@@ -1986,7 +2018,7 @@ mod tests {
 
         // send out first packet (a full initcwnd).
         let p = Sent {
-            pkt_num: 0,
+            pkt_num: SpacedPktNum(0, 0),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -2024,6 +2056,7 @@ mod tests {
 
         assert_eq!(
             r.on_ack_received(
+                0,
                 &acked,
                 10,
                 packet::Epoch::Application,
@@ -2043,7 +2076,7 @@ mod tests {
 
         // Send out second packet.
         let p = Sent {
-            pkt_num: 1,
+            pkt_num: SpacedPktNum(0, 1),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -2074,7 +2107,7 @@ mod tests {
 
         // Send the third packet out.
         let p = Sent {
-            pkt_num: 2,
+            pkt_num: SpacedPktNum(0, 2),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -2102,7 +2135,7 @@ mod tests {
 
         // Send the third packet out.
         let p = Sent {
-            pkt_num: 3,
+            pkt_num: SpacedPktNum(0, 3),
             frames: vec![],
             time_sent: now,
             time_acked: None,
@@ -2138,6 +2171,25 @@ mod tests {
             r.get_packet_send_time(),
             now + Duration::from_secs_f64(12000.0 / pacing_rate as f64)
         );
+    }
+
+    #[test]
+    fn spaced_pkt_num_ordering() {
+        // In same space.
+        let a = SpacedPktNum(42, 42);
+        let b = SpacedPktNum(42, 120);
+        let c = SpacedPktNum(42, 10);
+
+        assert_eq!(std::cmp::max(a, b), b);
+        assert_eq!(std::cmp::max(a, c), a);
+
+        // Different spaces.
+        let d = SpacedPktNum(42, 9999999);
+        let e = SpacedPktNum(43, 1);
+        let f = SpacedPktNum(9999, 2);
+
+        assert_eq!(std::cmp::max(d, e), e);
+        assert_eq!(std::cmp::max(e, f), f);
     }
 }
 
