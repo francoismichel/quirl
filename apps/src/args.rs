@@ -24,6 +24,8 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+use std::net::SocketAddr;
+
 use super::common::alpns;
 
 pub trait Args {
@@ -53,6 +55,7 @@ pub struct CommonArgs {
     pub max_field_section_size: Option<u64>,
     pub qpack_max_table_capacity: Option<u64>,
     pub qpack_blocked_streams: Option<u64>,
+    pub multipath: bool,
 }
 
 /// Creates a new `CommonArgs` structure using the provided [`Docopt`].
@@ -78,6 +81,7 @@ pub struct CommonArgs {
 /// --max-field-section-size BYTES  Max size of uncompressed field section.
 /// --qpack-max-table-capacity BYTES  Max capacity of dynamic QPACK decoding.
 /// --qpack-blocked-streams STREAMS  Limit of blocked streams while decoding.
+/// --multipath                 Enable multipath support.
 ///
 /// [`Docopt`]: https://docs.rs/docopt/1.1.0/docopt/
 impl Args for CommonArgs {
@@ -184,6 +188,8 @@ impl Args for CommonArgs {
                 None
             };
 
+        let multipath = args.get_bool("--multipath");
+
         CommonArgs {
             alpns,
             max_data,
@@ -206,6 +212,7 @@ impl Args for CommonArgs {
             max_field_section_size,
             qpack_max_table_capacity,
             qpack_blocked_streams,
+            multipath,
         }
     }
 }
@@ -234,6 +241,7 @@ impl Default for CommonArgs {
             max_field_section_size: None,
             qpack_max_table_capacity: None,
             qpack_blocked_streams: None,
+            multipath: false,
         }
     }
 }
@@ -270,6 +278,8 @@ Options:
   --max-active-cids NUM    The maximum number of active Connection IDs we can support [default: 2].
   --enable-active-migration   Enable active connection migration.
   --perform-migration      Perform connection migration on another source port.
+  --multipath              Enable multipath support.
+  -A --address ADDR ...    Additional client addresses to use.
   -H --header HEADER ...   Add a request header.
   -n --requests REQUESTS   Send the given number of identical requests [default: 1].
   --send-priority-update   Send HTTP/3 priority updates if the query string params 'u' or 'i' are present in URLs
@@ -297,6 +307,7 @@ pub struct ClientArgs {
     pub source_port: u16,
     pub perform_migration: bool,
     pub send_priority_update: bool,
+    pub addrs: Vec<SocketAddr>,
 }
 
 impl Args for ClientArgs {
@@ -367,6 +378,12 @@ impl Args for ClientArgs {
 
         let send_priority_update = args.get_bool("--send-priority-update");
 
+        let addrs = args
+            .get_vec("--address")
+            .into_iter()
+            .filter_map(|a| a.parse().ok())
+            .collect();
+
         ClientArgs {
             version,
             dump_response_path,
@@ -382,6 +399,7 @@ impl Args for ClientArgs {
             source_port,
             perform_migration,
             send_priority_update,
+            addrs,
         }
     }
 }
@@ -403,6 +421,7 @@ impl Default for ClientArgs {
             source_port: 0,
             perform_migration: false,
             send_priority_update: false,
+            addrs: vec![],
         }
     }
 }
@@ -442,6 +461,7 @@ Options:
   --qpack-blocked-streams STREAMS   Limit of streams that can be blocked while decoding. Any value other that 0 is currently unsupported.
   --disable-gso               Disable GSO (linux only).
   --disable-pacing            Disable pacing (linux only).
+  --multipath                 Enable multipath support.
   -h --help                   Show this screen.
 ";
 
