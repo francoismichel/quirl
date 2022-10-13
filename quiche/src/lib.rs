@@ -415,8 +415,8 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::time::Instant;
 use networkcoding::{source_symbol_metadata_from_u64, source_symbol_metadata_to_u64, SourceSymbol};
-use networkcoding::rlc::decoder::RLCDecoder;
-use networkcoding::rlc::encoder::RLCEncoder;
+use networkcoding::vandermonde_lc::decoder::VLCDecoder;
+use networkcoding::vandermonde_lc::encoder::VLCEncoder;
 
 use smallvec::SmallVec;
 
@@ -1911,17 +1911,14 @@ impl Connection {
 
             disable_dcid_reuse: config.disable_dcid_reuse,
             
-            fec_encoder: networkcoding::Encoder::RLC(RLCEncoder::new(1280, 5000, 42)),
-            fec_decoder: networkcoding::Decoder::RLC(RLCDecoder::new(1280, 5000)),
-            fec_scheduler: fec::fec_scheduler::new_background_scheduler(),
-            latest_metadata_of_symbol_with_fec_protected_frames: None,
-
             newly_acked: Vec::new(),
 
             dcid_seq_to_abandon: VecDeque::new(),
-
-            fec_encoder: Encoder::RLC(RLCEncoder::new(5000, 1300, 42)),
-            fec_decoder: Decoder::RLC(RLCDecoder::new(5000, 1300)),
+            
+            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(1280, 5000)),
+            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(1280, 5000)),
+            fec_scheduler: fec::fec_scheduler::new_background_scheduler(),
+            latest_metadata_of_symbol_with_fec_protected_frames: None,
             emit_fec: config.emit_fec,
             receive_fec: config.receive_fec,
         };

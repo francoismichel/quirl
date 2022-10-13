@@ -1685,11 +1685,11 @@ fn parse_datagram_frame(ty: u64, b: &mut octets::Octets) -> Result<Frame> {
 
 #[cfg(test)]
 mod tests {
-    use networkcoding::rlc::decoder::RLCDecoder;
+    use networkcoding::vandermonde_lc::decoder::VLCDecoder;
     use super::*;
 
     fn get_decoder() -> Decoder {
-        Decoder::RLC(RLCDecoder::new(1300, 8000))
+        Decoder::VLC(VLCDecoder::new(1300, 8000))
     }
     
 
