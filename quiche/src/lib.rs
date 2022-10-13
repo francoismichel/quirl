@@ -418,8 +418,8 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::time::Instant;
 use networkcoding::{source_symbol_metadata_from_u64, source_symbol_metadata_to_u64, SourceSymbol};
-use networkcoding::rlc::decoder::RLCDecoder;
-use networkcoding::rlc::encoder::RLCEncoder;
+use networkcoding::vandermonde_lc::decoder::VLCDecoder;
+use networkcoding::vandermonde_lc::encoder::VLCEncoder;
 
 use smallvec::SmallVec;
 
@@ -1930,8 +1930,8 @@ impl Connection {
 
             dcid_seq_to_abandon: VecDeque::new(),
             
-            fec_encoder: networkcoding::Encoder::RLC(RLCEncoder::new(1280, 5000, 42)),
-            fec_decoder: networkcoding::Decoder::RLC(RLCDecoder::new(1280, 5000)),
+            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(1280, 5000)),
+            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(1280, 5000)),
             fec_scheduler: fec::fec_scheduler::new_background_scheduler(),
             latest_metadata_of_symbol_with_fec_protected_frames: None,
 
@@ -4361,7 +4361,7 @@ impl Connection {
         let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?}.wire_len();
         let should_protect_packet = self.emit_fec 
                                     && !is_closing 
-                                    && self.paths.get(send_pid)?.active() 
+                                    && path.active() 
                                     && pkt_type == packet::Type::Short
                                     && ((left > max_fec_overhead + 1 + frame::MAX_DGRAM_OVERHEAD + self.dgram_send_queue.peek_front_len().unwrap_or(left + 1) && do_dgram) // enough space to write a datagram frame and its content
                                         || (left > max_fec_overhead + 1 + frame::MAX_STREAM_OVERHEAD && stream_to_emit)); // enough space to write a stream frame
@@ -4371,9 +4371,12 @@ impl Connection {
             left -= std::cmp::min(32, left)
         }
 
+        // cancel the mutable borrow on the connection because it is borrowed immutably in the FEC scheduler
+        let path = self.paths.get(send_pid)?;
+        
         // Create REPAIR frame.
         if self.emit_fec && pkt_type == packet::Type::Short
-            && self.fec_scheduler.should_send_repair(self, self.paths.get(send_pid)?, self.fec_encoder.symbol_size())
+            && self.fec_scheduler.should_send_repair(self, path, self.fec_encoder.symbol_size())
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
                 match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
@@ -4396,6 +4399,9 @@ impl Connection {
                 }
             }
         }
+
+        // redo the mutable borrows of conn
+        let path = self.paths.get_mut(send_pid)?;
 
         if should_protect_packet {
             left = std::cmp::min(left, self.fec_encoder.symbol_size().saturating_sub(b.off() - payload_offset));
