@@ -1066,22 +1066,22 @@ impl Frame {
                 raw: None,
             },
 
-            Frame::Repair { repair_symbol } => QuicFrame::Unknown {
+            Frame::Repair { .. } => QuicFrame::Unknown {
                 raw_frame_type: 0x32,
-                raw_length: Some(repair_symbol.wire_len() as u32),
                 raw: None,
+                frame_type_value: None,
             },
 
-            Frame::SourceSymbolHeader { metadata } => QuicFrame::Unknown {
+            Frame::SourceSymbolHeader { .. } => QuicFrame::Unknown {
                 raw_frame_type: 0x33,
-                raw_length: Some(metadata.len() as u32),
                 raw: None,
+                frame_type_value: None,
             },
 
-            Frame::SourceSymbol { source_symbol } => QuicFrame::Unknown {
+            Frame::SourceSymbol { .. } => QuicFrame::Unknown {
                 raw_frame_type: 0x33,
-                raw_length: Some(source_symbol.metadata().len() as u32),
                 raw: None,
+                frame_type_value: None,
             },
         }
     }
@@ -1425,11 +1425,11 @@ fn parse_datagram_frame(ty: u64, b: &mut octets::Octets) -> Result<Frame> {
 
 #[cfg(test)]
 mod tests {
-    use networkcoding::rlc::decoder::RLCDecoder;
+    use networkcoding::vandermonde_lc::decoder::VLCDecoder;
     use super::*;
 
     fn get_decoder() -> Decoder {
-        Decoder::RLC(RLCDecoder::new(1300, 8000))
+        Decoder::VLC(VLCDecoder::new(1300, 8000))
     }
     
 
