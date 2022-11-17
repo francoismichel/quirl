@@ -282,6 +282,7 @@
 //! [`send_response()`]: struct.Connection.html#method.send_response
 //! [`send_body()`]: struct.Connection.html#method.send_body
 
+use std::collections::HashSet;
 use std::collections::VecDeque;
 
 #[cfg(feature = "sfv")]
@@ -420,6 +421,10 @@ pub enum Error {
     /// The requested operation cannot be served over HTTP/3. Peer should retry
     /// over HTTP/1.1.
     VersionFallback,
+
+    /// The specified stream or stream type is not allowed to do
+    /// application-piped stream operations.
+    ApplicationPipeForbidden,
 }
 
 impl Error {
@@ -445,6 +450,7 @@ impl Error {
             Error::MessageError => 0x10E,
             Error::ConnectError => 0x10F,
             Error::VersionFallback => 0x110,
+            Error::ApplicationPipeForbidden => 0x111,
         }
     }
 
@@ -511,6 +517,7 @@ pub struct Config {
     qpack_max_table_capacity: Option<u64>,
     qpack_blocked_streams: Option<u64>,
     connect_protocol_enabled: Option<u64>,
+    raw_settings: Option<Vec<(u64, u64)>>,
 }
 
 impl Config {
@@ -521,6 +528,7 @@ impl Config {
             qpack_max_table_capacity: None,
             qpack_blocked_streams: None,
             connect_protocol_enabled: None,
+            raw_settings: None,
         })
     }
 
@@ -560,6 +568,13 @@ impl Config {
         } else {
             self.connect_protocol_enabled = None;
         }
+    }
+
+    /// Sets the H3 raw settings.
+    ///
+    /// The default value is no raw settings.
+    pub fn set_raw_settings(&mut self, v: Vec<(u64, u64)>) {
+        self.raw_settings = Some(v.clone())
     }
 }
 
@@ -672,6 +687,16 @@ pub enum Event {
     /// [`recv_body()`]: struct.Connection.html#method.recv_body
     /// [`Done`]: enum.Error.html#variant.Done
     Data,
+
+    /// Raw data was received on an application-piped stream
+    ///
+    /// This indicates that the application can use the [`recv_body()`] method
+    /// to retrieve the data from the stream in the same way it is used for
+    /// Data events.
+    ///
+    /// The u64 parameter specifies the HTTP3 stream type of the piped stream.
+    /// (note that this value is different from the stream ID)
+    ApplicationPipeData(u64),
 
     /// Stream was closed,
     Finished,
@@ -841,6 +866,9 @@ pub struct Connection {
 
     local_goaway_id: Option<u64>,
     peer_goaway_id: Option<u64>,
+
+    piped_stream_types: HashSet<u64>,
+    piped_stream_ids: HashSet<u64>,
 }
 
 impl Connection {
@@ -865,7 +893,7 @@ impl Connection {
                 qpack_blocked_streams: config.qpack_blocked_streams,
                 connect_protocol_enabled: config.connect_protocol_enabled,
                 h3_datagram,
-                raw: Default::default(),
+                raw: config.raw_settings.clone(),
             },
 
             peer_settings: ConnectionSettings {
@@ -901,7 +929,25 @@ impl Connection {
 
             local_goaway_id: None,
             peer_goaway_id: None,
+
+            piped_stream_types: HashSet::new(),
+            piped_stream_ids: HashSet::new(),
         })
+    }
+
+    /// Specifies custom H3 stream types for which streams will be piped to
+    /// the application. The raw data of these streams will be directly
+    /// forwarded to the application without any H3 frame parsing.
+    ///
+    /// Only undefined types can be piped to the application. Classical
+    /// H3 stream types (e.g. Control, Push, QPACK, ...) cannot be
+    /// piped to the application.
+    pub fn set_piped_stream_types(
+        &mut self, piped_stream_types: HashSet<u64>,
+    ) -> Result<()> {
+        // TODO: avoid piping classical H3 stream types
+        self.piped_stream_types = piped_stream_types;
+        Ok(())
     }
 
     /// Creates a new HTTP/3 connection using the provided QUIC connection.
@@ -953,6 +999,26 @@ impl Connection {
         }
 
         Ok(http3_conn)
+    }
+
+    /// Opens a new unidirectional application-piped stream.
+    ///
+    /// On success the new stream ID is returned.
+    ///
+    /// The [`ApplicationPipeForbidden`] error is returned when
+    /// the specified stream type cannot be used for application-piped
+    /// streams.
+    ///
+    /// [`ApplicationPipeForbidden`]: enum.Error.html#variant.ApplicationPipeForbidden
+    pub fn open_application_pipe_uni_stream(
+        &mut self, conn: &mut super::Connection, stream_type: u64,
+    ) -> Result<u64> {
+        if !self.piped_stream_types.contains(&stream_type) {
+            return Err(Error::ApplicationPipeForbidden);
+        }
+        let stream_id = self.open_uni_stream(conn, stream_type)?;
+        self.piped_stream_ids.insert(stream_id);
+        Ok(stream_id)
     }
 
     /// Sends an HTTP/3 request.
@@ -1172,6 +1238,112 @@ impl Connection {
         Ok(())
     }
 
+    /// Sends data on an application-piped stream. The specified stream
+    /// must have been opened previously as an application-piped stream.
+    ///
+    /// On success the number of bytes written is returned, or [`Done`] if no
+    /// bytes could be written (e.g. because the stream is blocked).
+    ///
+    /// Note that the number of written bytes returned can be lower than the
+    /// length of the input buffer when the underlying QUIC stream doesn't have
+    /// enough capacity for the operation to complete.
+    ///
+    /// When a partial write happens (including when [`Done`] is returned) the
+    /// application should retry the operation once the stream is reported as
+    /// writable again.
+    ///
+    /// The [`ApplicationPipeForbidden`] error is returned when the specified
+    /// stream cannot be used for application-piped streams.
+    ///
+    /// [`ApplicationPipeForbidden`]: enum.Error.html#variant.ApplicationPipeForbidden
+    /// [`Done`]: enum.Error.html#variant.Done
+    pub fn send_application_pipe_stream_data(
+        &mut self, conn: &mut super::Connection, stream_id: u64, data: &[u8],
+        fin: bool,
+    ) -> Result<usize> {
+        if !self.piped_stream_ids.contains(&stream_id) {
+            return Err(Error::ApplicationPipeForbidden);
+        }
+
+        match self.streams.get(&stream_id) {
+            Some(s) =>
+                if !s.local_initialized() {
+                    return Err(Error::IdError);
+                },
+
+            None => {
+                let mut stream = stream::Stream::new(stream_id, true);
+                stream.initialize_local();
+                self.streams.insert(stream_id, stream);
+            },
+        };
+
+        // Avoid sending 0-length data when the fin flag is false.
+        if data.is_empty() && !fin {
+            return Err(Error::Done);
+        }
+
+        let stream_cap = match conn.stream_capacity(stream_id) {
+            Ok(v) => v,
+
+            Err(e) => {
+                if conn.stream_finished(stream_id) {
+                    self.streams.remove(&stream_id);
+                }
+
+                return Err(e.into());
+            },
+        };
+
+        if stream_cap < data.len() {
+            // Ensure the peer is notified that the connection or stream is
+            // blocked when the stream's capacity is limited by flow control.
+            let _ = conn.stream_writable(stream_id, data.len());
+        }
+
+        // Cap the frame payload length to the stream's capacity.
+        let data_len = std::cmp::min(data.len(), stream_cap);
+
+        // If we can't send the entire body, set the fin flag to false so the
+        // application can try again later.
+        let fin = if data_len != data.len() { false } else { fin };
+
+        // Again, avoid sending 0-length DATA frames when the fin flag is false.
+        if data_len == 0 && !fin {
+            return Err(Error::Done);
+        }
+
+        // Return how many bytes were written, excluding the frame header.
+        // Sending body separately avoids unnecessary copy.
+        let written = conn.stream_send(stream_id, &data[..data_len], fin)?;
+
+        trace!(
+            "{} tx frm APPLICATION_PIPE stream={} len={} fin={}",
+            conn.trace_id(),
+            stream_id,
+            written,
+            fin
+        );
+
+        qlog_with_type!(QLOG_FRAME_CREATED, conn.qlog, q, {
+            let frame = Http3Frame::Data { raw: None };
+            let ev_data = EventData::H3FrameCreated(H3FrameCreated {
+                stream_id,
+                length: Some(written as u64),
+                frame,
+                raw: None,
+            });
+
+            q.add_event_data_now(ev_data).ok();
+        });
+
+        if fin && written == data.len() && conn.stream_finished(stream_id) {
+            self.streams.remove(&stream_id);
+        }
+
+        Ok(written)
+    }
+
     /// Sends an HTTP/3 body chunk on the given stream.
     ///
     /// On success the number of bytes written is returned, or [`Done`] if no
@@ -1320,7 +1492,7 @@ impl Connection {
     /// Reads request or response body data into the provided buffer.
     ///
     /// Applications should call this method whenever the [`poll()`] method
-    /// returns a [`Data`] event.
+    /// returns a [`Data`] or [`ApplicationPipeData`] event.
     ///
     /// On success the amount of bytes read is returned, or [`Done`] if there
     /// is no data to read.
@@ -1338,7 +1510,9 @@ impl Connection {
         while total < out.len() {
             let stream = self.streams.get_mut(&stream_id).ok_or(Error::Done)?;
 
-            if stream.state() != stream::State::Data {
+            if stream.state() != stream::State::Data &&
+                !matches!(stream.state(), stream::State::ApplicationPipe(_))
+            {
                 break;
             }
 
@@ -1726,9 +1900,13 @@ impl Connection {
             // TODO: Server push
             stream::HTTP3_PUSH_STREAM_TYPE_ID => (),
 
-            // Anything else is a GREASE stream, so make it the least important.
+            // Either application piped streams or GREASE streams
             _ => {
-                conn.stream_priority(stream_id, 255, false)?;
+                if !self.piped_stream_types.contains(&ty) {
+                    // Anything else is a GREASE stream, so make it the least
+                    // important.
+                    conn.stream_priority(stream_id, 255, false)?;
+                }
             },
         }
 
@@ -1961,7 +2139,7 @@ impl Connection {
                 .connect_protocol_enabled,
             h3_datagram: self.local_settings.h3_datagram,
             grease,
-            raw: Default::default(),
+            raw: self.local_settings.raw.clone(),
         };
 
         let mut d = [42; 128];
@@ -2053,7 +2231,13 @@ impl Connection {
                         Err(_) => continue,
                     };
 
-                    let ty = stream::Type::deserialize(varint)?;
+                    let mut ty = stream::Type::deserialize(varint)?;
+
+                    if ty == stream::Type::Unknown &&
+                        self.piped_stream_types.contains(&varint)
+                    {
+                        ty = stream::Type::ApplicationPipe(varint);
+                    }
 
                     if let Err(e) = stream.set_ty(ty) {
                         conn.close(true, e.to_wire(), b"")?;
@@ -2144,6 +2328,10 @@ impl Connection {
                         stream::Type::Unknown => {
                             // Unknown stream types are ignored.
                             // TODO: we MAY send STOP_SENDING
+                        },
+
+                        stream::Type::ApplicationPipe(_) => {
+                            // Application pipes do not require actions from h3
                         },
 
                         stream::Type::Request => unreachable!(),
@@ -2317,6 +2505,21 @@ impl Connection {
                 },
 
                 stream::State::Finished => break,
+                stream::State::ApplicationPipe(stream_type) => {
+                    // Do not emit events when not polling.
+                    if !polling {
+                        break;
+                    }
+
+                    if !stream.try_trigger_application_pipe_event() {
+                        break;
+                    }
+
+                    return Ok((
+                        stream_id,
+                        Event::ApplicationPipeData(stream_type),
+                    ));
+                },
             }
         }
 

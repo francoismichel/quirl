@@ -43,6 +43,7 @@ pub enum Type {
     Push,
     QpackEncoder,
     QpackDecoder,
+    ApplicationPipe(u64),
     Unknown,
 }
 
@@ -55,6 +56,8 @@ impl Type {
             Type::Push => qlog::events::h3::H3StreamType::Push,
             Type::QpackEncoder => qlog::events::h3::H3StreamType::QpackEncode,
             Type::QpackDecoder => qlog::events::h3::H3StreamType::QpackDecode,
+            Type::ApplicationPipe(stream_type) =>
+                qlog::events::h3::H3StreamType::ApplicationPipe(stream_type),
             Type::Unknown => qlog::events::h3::H3StreamType::Unknown,
         }
     }
@@ -85,6 +88,9 @@ pub enum State {
 
     /// Reading and discarding data.
     Drain,
+
+    /// Piping the raw stream data towards the application
+    ApplicationPipe(u64),
 
     /// All data has been read.
     Finished,
@@ -154,6 +160,9 @@ pub struct Stream {
     /// Whether a `Data` event has been triggered for this stream.
     data_event_triggered: bool,
 
+    /// Whether a `ApplicationPipe` event has been triggered for this stream.
+    application_pipe_event_triggered: bool,
+
     /// The last `PRIORITY_UPDATE` frame encoded field value, if any.
     last_priority_update: Option<Vec<u8>>,
 }
@@ -195,6 +204,8 @@ impl Stream {
 
             data_event_triggered: false,
 
+            application_pipe_event_triggered: false,
+
             last_priority_update: None,
         }
     }
@@ -224,6 +235,8 @@ impl Stream {
                 State::QpackInstruction
             },
 
+            Type::ApplicationPipe(stream_type) =>
+                State::ApplicationPipe(stream_type),
             Type::Unknown => State::Drain,
         };
 
@@ -505,7 +518,7 @@ impl Stream {
         Ok((frame, payload_len))
     }
 
-    /// Tries to read DATA payload from the transport stream.
+    /// Tries to read DATA or ApplicationPipe payload from the transport stream.
     pub fn try_consume_data(
         &mut self, conn: &mut crate::Connection, out: &mut [u8],
     ) -> Result<(usize, bool)> {
@@ -515,9 +528,18 @@ impl Stream {
             Ok(v) => v,
 
             Err(e) => {
-                // The stream is not readable anymore, so re-arm the Data event.
+                // The stream is not readable anymore, so re-arm the
+                // Data/ApplicationPipe event.
                 if e == crate::Error::Done {
-                    self.reset_data_event();
+                    match self.state {
+                        State::Data => {
+                            self.reset_data_event();
+                        },
+                        State::ApplicationPipe(_) => {
+                            self.reset_application_pipe_event();
+                        },
+                        _ => (),
+                    }
                 }
 
                 return Err(e.into());
@@ -578,9 +600,29 @@ impl Stream {
         true
     }
 
+    /// Tries to update the ApplicationPipe triggered state for the stream.
+    ///
+    /// This returns `true` if a ApplicationPipe event was not already triggered
+    /// before the last reset, and updates the state. Returns `false`
+    /// otherwise.
+    pub fn try_trigger_application_pipe_event(&mut self) -> bool {
+        if self.application_pipe_event_triggered {
+            return false;
+        }
+
+        self.application_pipe_event_triggered = true;
+
+        true
+    }
+
     /// Resets the data triggered state.
     fn reset_data_event(&mut self) {
         self.data_event_triggered = false;
+    }
+
+    /// Resets the data triggered state.
+    fn reset_application_pipe_event(&mut self) {
+        self.application_pipe_event_triggered = false;
     }
 
     /// Set the last priority update for the stream.
