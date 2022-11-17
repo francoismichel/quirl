@@ -180,6 +180,7 @@ impl Frame {
                 connect_protocol_enabled,
                 h3_datagram,
                 grease,
+                raw,
                 ..
             } => {
                 let mut len = 0;
@@ -214,6 +215,13 @@ impl Frame {
                     len += octets::varint_len(val.1);
                 }
 
+                if let Some(vals) = raw {
+                    for val in vals {
+                        len += octets::varint_len(val.0);
+                        len += octets::varint_len(val.1);
+                    }
+                }
+
                 b.put_varint(SETTINGS_FRAME_TYPE_ID)?;
                 b.put_varint(len as u64)?;
 
@@ -245,6 +253,13 @@ impl Frame {
                 if let Some(val) = grease {
                     b.put_varint(val.0)?;
                     b.put_varint(val.1)?;
+                }
+
+                if let Some(vals) = raw {
+                    for val in vals {
+                        b.put_varint(val.0)?;
+                        b.put_varint(val.1)?;
+                    }
                 }
             },
 

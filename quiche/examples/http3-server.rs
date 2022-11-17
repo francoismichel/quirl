@@ -376,6 +376,9 @@ fn main() {
 
                         Ok((_goaway_id, quiche::h3::Event::GoAway)) => (),
 
+                        Ok((_, quiche::h3::Event::ApplicationPipeData(_))) =>
+                            unreachable!(),
+
                         Err(quiche::h3::Error::Done) => {
                             break;
                         },

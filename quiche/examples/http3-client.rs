@@ -288,6 +288,9 @@ fn main() {
                         info!("GOAWAY id={}", goaway_id);
                     },
 
+                    Ok((_, quiche::h3::Event::ApplicationPipeData(_))) =>
+                        unreachable!(),
+
                     Err(quiche::h3::Error::Done) => {
                         break;
                     },
