@@ -522,7 +522,10 @@ impl Stream {
     pub fn try_consume_data(
         &mut self, conn: &mut crate::Connection, out: &mut [u8],
     ) -> Result<(usize, bool)> {
-        let left = std::cmp::min(out.len(), self.state_len - self.state_off);
+        let left = match self.ty {
+            Some(Type::ApplicationPipe(_)) => out.len(),
+            _ => std::cmp::min(out.len(), self.state_len - self.state_off),
+        };
 
         let (len, fin) = match conn.stream_recv(self.id, &mut out[..left]) {
             Ok(v) => v,
@@ -553,7 +556,9 @@ impl Stream {
             self.reset_data_event();
         }
 
-        if self.state_buffer_complete() {
+        if self.state_buffer_complete() &&
+            !matches!(self.ty, Some(Type::ApplicationPipe(_)))
+        {
             self.state_transition(State::FrameType, 1, true)?;
         }
 
