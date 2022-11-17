@@ -46,6 +46,7 @@ pub enum H3StreamType {
     QpackEncode,
     QpackDecode,
     Reserved,
+    ApplicationPipe(u64),
     Unknown,
 }
 
