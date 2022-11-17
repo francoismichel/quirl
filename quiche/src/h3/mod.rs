@@ -178,6 +178,11 @@
 //!              // Peer signalled it is going away, handle it.
 //!         },
 //!
+//!         Ok((_, quiche::h3::Event::ApplicationPipeData(_))) => {
+//!             // should not be triggered as no stream was piped from the connection
+//!             unreachable!();
+//!         },
+//!
 //!         Err(quiche::h3::Error::Done) => {
 //!             // Done reading.
 //!             break;
@@ -237,6 +242,11 @@
 //!
 //!         Ok((goaway_id, quiche::h3::Event::GoAway)) => {
 //!              // Peer signalled it is going away, handle it.
+//!         },
+//!
+//!         Ok((_, quiche::h3::Event::ApplicationPipeData(_))) => {
+//!             // should not be triggered as no stream was piped from the connection
+//!             unreachable!();
 //!         },
 //!
 //!         Err(quiche::h3::Error::Done) => {
@@ -945,6 +955,15 @@ impl Connection {
     pub fn set_piped_stream_types(
         &mut self, piped_stream_types: HashSet<u64>,
     ) -> Result<()> {
+        let forbidden_stream_types = std::collections::HashSet::from([
+            stream::HTTP3_CONTROL_STREAM_TYPE_ID,
+            stream::HTTP3_PUSH_STREAM_TYPE_ID,
+            stream::QPACK_ENCODER_STREAM_TYPE_ID,
+            stream::QPACK_DECODER_STREAM_TYPE_ID,
+        ]);
+        if !piped_stream_types.is_disjoint(&forbidden_stream_types) {
+            return Err(Error::ApplicationPipeForbidden);
+        }
         // TODO: avoid piping classical H3 stream types
         self.piped_stream_types = piped_stream_types;
         Ok(())
@@ -2538,7 +2557,9 @@ impl Connection {
         }
 
         match stream.ty() {
-            Some(stream::Type::Request) | Some(stream::Type::Push) => {
+            Some(stream::Type::Request) |
+            Some(stream::Type::Push) |
+            Some(stream::Type::ApplicationPipe(_)) => {
                 stream.finished();
 
                 self.finished_streams.push_back(stream_id);
@@ -4579,6 +4600,89 @@ mod tests {
     }
 
     #[test]
+    /// Pipes classical stream types, which is forbidden
+    fn piping_classical_stream_types() {
+        let mut s = Session::default().unwrap();
+        assert_eq!(
+            s.client
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::HTTP3_CONTROL_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+        assert_eq!(
+            s.client
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::HTTP3_PUSH_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+        assert_eq!(
+            s.client
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::QPACK_ENCODER_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+        assert_eq!(
+            s.client
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::QPACK_DECODER_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+        assert_eq!(
+            s.client
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::HTTP3_CONTROL_STREAM_TYPE_ID,
+                    stream::HTTP3_PUSH_STREAM_TYPE_ID,
+                    stream::QPACK_ENCODER_STREAM_TYPE_ID,
+                    stream::QPACK_DECODER_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+
+        assert_eq!(
+            s.server
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::HTTP3_CONTROL_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+        assert_eq!(
+            s.server
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::HTTP3_PUSH_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+        assert_eq!(
+            s.server
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::QPACK_ENCODER_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+        assert_eq!(
+            s.server
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::QPACK_DECODER_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+        assert_eq!(
+            s.server
+                .set_piped_stream_types(std::collections::HashSet::from([
+                    stream::HTTP3_CONTROL_STREAM_TYPE_ID,
+                    stream::HTTP3_PUSH_STREAM_TYPE_ID,
+                    stream::QPACK_ENCODER_STREAM_TYPE_ID,
+                    stream::QPACK_DECODER_STREAM_TYPE_ID
+                ])),
+            Err(Error::ApplicationPipeForbidden)
+        );
+    }
+
+    #[test]
     /// Client opens multiple control streams, which is forbidden.
     fn open_multiple_control_streams() {
         let mut s = Session::new().unwrap();
@@ -4705,6 +4809,135 @@ mod tests {
                 },
             }
         }
+    }
+
+    #[test]
+    /// Server send application-piped streams data
+    fn server_application_pipe_data() {
+        let mut config = crate::Config::new(crate::PROTOCOL_VERSION).unwrap();
+        config
+            .load_cert_chain_from_pem_file("examples/cert.crt")
+            .unwrap();
+        config
+            .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        config.set_application_protos(&[b"h3"]).unwrap();
+        config.set_initial_max_data(70);
+        config.set_initial_max_stream_data_bidi_local(150);
+        config.set_initial_max_stream_data_bidi_remote(150);
+        config.set_initial_max_stream_data_uni(150);
+        config.set_initial_max_streams_bidi(100);
+        config.set_initial_max_streams_uni(6);
+        config.verify_peer(false);
+
+        let mut h3_config = Config::new().unwrap();
+
+        let mut s = Session::with_configs(&mut config, &mut h3_config).unwrap();
+        s.handshake().unwrap();
+
+        let stream_types = [42u64, 420u64];
+        s.server
+            .set_piped_stream_types(std::collections::HashSet::from(stream_types))
+            .unwrap();
+        s.client
+            .set_piped_stream_types(std::collections::HashSet::from(stream_types))
+            .unwrap();
+
+        let mut server_stream_ids = vec![];
+
+        server_stream_ids.push(
+            s.server
+                .open_application_pipe_uni_stream(
+                    &mut s.pipe.server,
+                    stream_types[0],
+                )
+                .unwrap(),
+        );
+        s.advance().ok();
+        assert_eq!(
+            5,
+            s.server
+                .send_application_pipe_stream_data(
+                    &mut s.pipe.server,
+                    server_stream_ids[0],
+                    b"hello",
+                    true
+                )
+                .unwrap()
+        );
+        s.advance().ok();
+
+        assert_eq!(
+            s.poll_client(),
+            Ok((
+                server_stream_ids[0],
+                Event::ApplicationPipeData(stream_types[0])
+            ))
+        );
+        let mut buf = [0; 1000];
+        assert_eq!(
+            5,
+            s.client
+                .recv_body(&mut s.pipe.client, server_stream_ids[0], &mut buf[..])
+                .unwrap()
+        );
+        assert_eq!(
+            Err(Error::Done),
+            s.client.recv_body(
+                &mut s.pipe.client,
+                server_stream_ids[0],
+                &mut buf[..0]
+            )
+        );
+        assert_eq!(b"hello", &buf[..5]);
+        assert_eq!(s.poll_client(), Ok((server_stream_ids[0], Event::Finished)));
+
+        server_stream_ids.push(
+            s.server
+                .open_application_pipe_uni_stream(
+                    &mut s.pipe.server,
+                    stream_types[1],
+                )
+                .unwrap(),
+        );
+        s.advance().ok();
+        assert_eq!(
+            6,
+            s.server
+                .send_application_pipe_stream_data(
+                    &mut s.pipe.server,
+                    server_stream_ids[1],
+                    b"world!",
+                    true
+                )
+                .unwrap()
+        );
+        s.advance().ok();
+
+        assert_eq!(
+            s.poll_client(),
+            Ok((
+                server_stream_ids[1],
+                Event::ApplicationPipeData(stream_types[1])
+            ))
+        );
+        let mut buf = [0; 1000];
+        assert_eq!(
+            6,
+            s.client
+                .recv_body(&mut s.pipe.client, server_stream_ids[1], &mut buf[..])
+                .unwrap()
+        );
+        assert_eq!(
+            Err(Error::Done),
+            s.client.recv_body(
+                &mut s.pipe.client,
+                server_stream_ids[1],
+                &mut buf[..0]
+            )
+        );
+        assert_eq!(b"world!", &buf[..6]);
+        assert_eq!(s.poll_client(), Ok((server_stream_ids[1], Event::Finished)));
     }
 
     #[test]
