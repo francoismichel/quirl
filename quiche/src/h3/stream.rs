@@ -218,6 +218,11 @@ impl Stream {
         self.state
     }
 
+    pub fn become_application_pipe(&mut self, ty: u64) {
+        self.state = State::ApplicationPipe(ty);
+        self.ty = Some(Type::ApplicationPipe(ty));
+    }
+
     /// Sets the stream's type and transitions to the next state.
     pub fn set_ty(&mut self, ty: Type) -> Result<()> {
         assert_eq!(self.state, State::StreamType);
