@@ -69,6 +69,7 @@ pub enum Frame {
         connect_protocol_enabled: Option<u64>,
         h3_datagram: Option<u64>,
         grease: Option<(u64, u64)>,
+        additional_settings: Option<Vec<(u64, u64)>>,
         raw: Option<Vec<(u64, u64)>>,
     },
 
@@ -180,7 +181,7 @@ impl Frame {
                 connect_protocol_enabled,
                 h3_datagram,
                 grease,
-                raw,
+                additional_settings,
                 ..
             } => {
                 let mut len = 0;
@@ -215,7 +216,7 @@ impl Frame {
                     len += octets::varint_len(val.1);
                 }
 
-                if let Some(vals) = raw {
+                if let Some(vals) = additional_settings {
                     for val in vals {
                         len += octets::varint_len(val.0);
                         len += octets::varint_len(val.1);
@@ -255,7 +256,7 @@ impl Frame {
                     b.put_varint(val.1)?;
                 }
 
-                if let Some(vals) = raw {
+                if let Some(vals) = additional_settings {
                     for val in vals {
                         b.put_varint(val.0)?;
                         b.put_varint(val.1)?;
@@ -462,10 +463,11 @@ impl std::fmt::Debug for Frame {
                 max_field_section_size,
                 qpack_max_table_capacity,
                 qpack_blocked_streams,
+                additional_settings,
                 raw,
                 ..
             } => {
-                write!(f, "SETTINGS max_field_section={:?}, qpack_max_table={:?}, qpack_blocked={:?} raw={:?}", max_field_section_size, qpack_max_table_capacity, qpack_blocked_streams, raw)?;
+                write!(f, "SETTINGS max_field_section={:?}, qpack_max_table={:?}, qpack_blocked={:?} raw={:?}, additional_settings={:?}", max_field_section_size, qpack_max_table_capacity, qpack_blocked_streams, raw, additional_settings)?;
             },
 
             Frame::PushPromise {
@@ -530,6 +532,7 @@ fn parse_settings_frame(
     let mut connect_protocol_enabled = None;
     let mut h3_datagram = None;
     let mut raw = Vec::new();
+    let mut additional_settings: Option<Vec<(u64, u64)>> = None;
 
     // Reject SETTINGS frames that are too long.
     if settings_length > MAX_SETTINGS_PAYLOAD_SIZE {
@@ -577,8 +580,13 @@ fn parse_settings_frame(
             0x0 | 0x2 | 0x3 | 0x4 | 0x5 =>
                 return Err(super::Error::SettingsError),
 
-            // Unknown Settings parameters must be ignored.
-            _ => (),
+            // Unknown Settings parameters go into additional_settings.
+            _ => {
+                match &mut additional_settings {
+                    Some(s) => s.push((identifier, value)),
+                    None => additional_settings = Some(vec![(identifier, value)]),
+                }
+            }
         }
     }
 
@@ -590,6 +598,7 @@ fn parse_settings_frame(
         h3_datagram,
         grease: None,
         raw: Some(raw),
+        additional_settings: additional_settings,
     })
 }
 
@@ -738,6 +747,7 @@ mod tests {
             h3_datagram: Some(0),
             grease: None,
             raw: Some(raw_settings),
+            additional_settings: None,
         };
 
         let frame_payload_len = 11;
@@ -773,6 +783,7 @@ mod tests {
             h3_datagram: Some(0),
             grease: Some((33, 33)),
             raw: Default::default(),
+            additional_settings: None,
         };
 
         let raw_settings = vec![
@@ -794,6 +805,7 @@ mod tests {
             h3_datagram: Some(0),
             grease: None,
             raw: Some(raw_settings),
+            additional_settings: Some(vec![(33, 33)]),
         };
 
         let frame_payload_len = 13;
@@ -805,6 +817,8 @@ mod tests {
         };
 
         assert_eq!(wire_len, frame_header_len + frame_payload_len);
+
+        println!("FRAMES {:?}", frame_parsed);
 
         assert_eq!(
             Frame::from_bytes(
@@ -831,6 +845,7 @@ mod tests {
             h3_datagram: None,
             grease: None,
             raw: Some(raw_settings),
+            additional_settings: None,
         };
 
         let frame_payload_len = 3;
@@ -868,6 +883,7 @@ mod tests {
             h3_datagram: None,
             grease: None,
             raw: Some(raw_settings),
+            additional_settings: None,
         };
 
         let frame_payload_len = 2;
@@ -905,6 +921,7 @@ mod tests {
             h3_datagram: None,
             grease: None,
             raw: Some(raw_settings),
+            additional_settings: None,
         };
 
         let frame_payload_len = 2;
@@ -941,6 +958,7 @@ mod tests {
             h3_datagram: Some(1),
             grease: None,
             raw: Some(raw_settings),
+            additional_settings: None,
         };
 
         let frame_payload_len = 3;
@@ -976,6 +994,7 @@ mod tests {
             h3_datagram: Some(5),
             grease: None,
             raw: Default::default(),
+            additional_settings: None,
         };
 
         let frame_payload_len = 3;
@@ -1015,6 +1034,7 @@ mod tests {
             h3_datagram: None,
             grease: None,
             raw: Some(raw_settings),
+            additional_settings: None,
         };
 
         let frame_payload_len = 4;

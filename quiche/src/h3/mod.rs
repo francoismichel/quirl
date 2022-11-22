@@ -531,6 +531,8 @@ pub struct Config {
     qpack_max_table_capacity: Option<u64>,
     qpack_blocked_streams: Option<u64>,
     connect_protocol_enabled: Option<u64>,
+    /// additional settings are settings that are not part of the classical H3 settings above 
+    additional_settings: Option<Vec<(u64, u64)>>,
     raw_settings: Option<Vec<(u64, u64)>>,
 }
 
@@ -542,6 +544,7 @@ impl Config {
             qpack_max_table_capacity: None,
             qpack_blocked_streams: None,
             connect_protocol_enabled: None,
+            additional_settings: None,
             raw_settings: None,
         })
     }
@@ -587,8 +590,8 @@ impl Config {
     /// Sets the H3 raw settings.
     ///
     /// The default value is no raw settings.
-    pub fn set_raw_settings(&mut self, v: Vec<(u64, u64)>) {
-        self.raw_settings = Some(v.clone())
+    pub fn set_additional_settings(&mut self, v: Vec<(u64, u64)>) {
+        self.additional_settings = Some(v.clone())
     }
 }
 
@@ -852,6 +855,7 @@ struct ConnectionSettings {
     pub qpack_blocked_streams: Option<u64>,
     pub connect_protocol_enabled: Option<u64>,
     pub h3_datagram: Option<u64>,
+    pub additional_settings: Option<Vec<(u64, u64)>>,
     pub raw: Option<Vec<(u64, u64)>>,
 }
 
@@ -918,6 +922,7 @@ impl Connection {
                 qpack_blocked_streams: config.qpack_blocked_streams,
                 connect_protocol_enabled: config.connect_protocol_enabled,
                 h3_datagram,
+                additional_settings: config.additional_settings.clone(),
                 raw: config.raw_settings.clone(),
             },
 
@@ -927,6 +932,7 @@ impl Connection {
                 qpack_blocked_streams: None,
                 h3_datagram: None,
                 connect_protocol_enabled: None,
+                additional_settings: Default::default(),
                 raw: Default::default(),
             },
 
@@ -2259,6 +2265,7 @@ impl Connection {
                 .connect_protocol_enabled,
             h3_datagram: self.local_settings.h3_datagram,
             grease,
+            additional_settings: self.local_settings.additional_settings.clone(),
             raw: self.local_settings.raw.clone(),
         };
 
@@ -2697,6 +2704,7 @@ impl Connection {
                 qpack_blocked_streams,
                 connect_protocol_enabled,
                 h3_datagram,
+                additional_settings,
                 raw,
                 ..
             } => {
@@ -2706,6 +2714,7 @@ impl Connection {
                     qpack_blocked_streams,
                     connect_protocol_enabled,
                     h3_datagram,
+                    additional_settings,
                     raw,
                 };
 
@@ -5525,6 +5534,7 @@ mod tests {
             connect_protocol_enabled: None,
             h3_datagram: Some(1),
             grease: None,
+            additional_settings: Default::default(),
             raw: Default::default(),
         };
 
