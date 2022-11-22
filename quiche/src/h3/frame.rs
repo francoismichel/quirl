@@ -830,8 +830,6 @@ mod tests {
 
         assert_eq!(wire_len, frame_header_len + frame_payload_len);
 
-        println!("FRAMES {:?}", frame_parsed);
-
         assert_eq!(
             Frame::from_bytes(
                 SETTINGS_FRAME_TYPE_ID,
