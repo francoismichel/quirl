@@ -591,12 +591,10 @@ fn parse_settings_frame(
                 return Err(super::Error::SettingsError),
 
             // Unknown Settings parameters go into additional_settings.
-            _ => {
-                match &mut additional_settings {
-                    Some(s) => s.push((identifier, value)),
-                    None => additional_settings = Some(vec![(identifier, value)]),
-                }
-            }
+            _ => match &mut additional_settings {
+                Some(s) => s.push((identifier, value)),
+                None => additional_settings = Some(vec![(identifier, value)]),
+            },
         }
     }
 
@@ -608,7 +606,7 @@ fn parse_settings_frame(
         h3_datagram,
         grease: None,
         raw: Some(raw),
-        additional_settings: additional_settings,
+        additional_settings,
     })
 }
 
