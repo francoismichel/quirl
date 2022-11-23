@@ -1088,6 +1088,8 @@ impl Connection {
 
     /// Opens a new bidirectional application-piped stream.
     ///
+    /// Server-initiated bidi streams are currently unsupported.
+    ///
     /// On success the new stream ID is returned.
     ///
     /// The [`ApplicationPipeForbidden`] error is returned when
@@ -1098,7 +1100,7 @@ impl Connection {
     pub fn open_application_pipe_frame_on_request_stream(
         &mut self, conn: &mut super::Connection, frame_type: u64,
     ) -> Result<u64> {
-        if !self.piped_query_frames.contains(&frame_type) {
+        if !self.piped_query_frames.contains(&frame_type) || self.is_server {
             return Err(Error::ApplicationPipeForbidden);
         }
 
@@ -5195,6 +5197,11 @@ mod tests {
         assert_eq!(s.poll_client(), Ok((client_stream_ids[0], Event::Finished)));
 
 
+        assert!(matches!(s.server
+            .open_application_pipe_frame_on_request_stream(
+                &mut s.pipe.server,
+                frame_types[0],
+            ), Err(Error::ApplicationPipeForbidden)));
         
     }
 
