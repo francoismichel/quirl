@@ -531,7 +531,8 @@ pub struct Config {
     qpack_max_table_capacity: Option<u64>,
     qpack_blocked_streams: Option<u64>,
     connect_protocol_enabled: Option<u64>,
-    /// additional settings are settings that are not part of the classical H3 settings above 
+    /// additional settings are settings that are not part of the classical H3
+    /// settings above
     additional_settings: Option<Vec<(u64, u64)>>,
     raw_settings: Option<Vec<(u64, u64)>>,
 }
@@ -996,7 +997,6 @@ impl Connection {
         self.piped_query_frames = piped_query_frames_types;
         Ok(())
     }
-    
 
     /// Specifies custom H3 stream types for which streams will be piped to
     /// the application. The raw data of these streams will be directly
@@ -1097,7 +1097,10 @@ impl Connection {
     }
 
     fn pipe_stream(&mut self, stream_id: u64, ty: u64) -> Result<()> {
-        let stream = self.streams.get_mut(&stream_id).ok_or(Error::ApplicationPipeForbidden)?;
+        let stream = self
+            .streams
+            .get_mut(&stream_id)
+            .ok_or(Error::ApplicationPipeForbidden)?;
         self.piped_stream_ids.insert(stream_id);
         stream.become_application_pipe(ty);
         Ok(())
@@ -2562,7 +2565,7 @@ impl Connection {
                     if let Some(stream::Type::Request) = stream.ty() {
                         if self.piped_query_frames.contains(&varint) {
                             self.pipe_stream(stream_id, varint)?;
-                            continue
+                            continue;
                         }
                     }
                     match stream.set_frame_type(varint) {
@@ -5060,10 +5063,14 @@ mod tests {
 
         let frame_types = [42u64, 420u64];
         s.server
-            .set_piped_query_frame_types(std::collections::HashSet::from(frame_types))
+            .set_piped_query_frame_types(std::collections::HashSet::from(
+                frame_types,
+            ))
             .unwrap();
         s.client
-            .set_piped_query_frame_types(std::collections::HashSet::from(frame_types))
+            .set_piped_query_frame_types(std::collections::HashSet::from(
+                frame_types,
+            ))
             .unwrap();
 
         let mut client_stream_ids = vec![];
@@ -5164,7 +5171,6 @@ mod tests {
 
         // server answers
 
-
         assert_eq!(
             3,
             s.server
@@ -5203,13 +5209,13 @@ mod tests {
         assert_eq!(b"bye", &buf[..3]);
         assert_eq!(s.poll_client(), Ok((client_stream_ids[0], Event::Finished)));
 
-
-        assert!(matches!(s.server
-            .open_application_pipe_frame_on_request_stream(
+        assert!(matches!(
+            s.server.open_application_pipe_frame_on_request_stream(
                 &mut s.pipe.server,
                 frame_types[0],
-            ), Err(Error::ApplicationPipeForbidden)));
-        
+            ),
+            Err(Error::ApplicationPipeForbidden)
+        ));
     }
 
     #[test]
