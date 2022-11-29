@@ -2414,7 +2414,6 @@ impl Connection {
         self.streams
             .entry(stream_id)
             .or_insert_with(|| stream::Stream::new(stream_id, false));
-
         // We need to get a fresh reference to the stream for each
         // iteration, to avoid borrowing `self` for the entire duration
         // of the loop, because we'll need to borrow it again in the
@@ -5091,7 +5090,7 @@ mod tests {
                     &mut s.pipe.client,
                     client_stream_ids[0],
                     b"hello",
-                    true
+                    false
                 )
                 .unwrap()
         );
@@ -5120,7 +5119,49 @@ mod tests {
             )
         );
         assert_eq!(b"hello", &buf[..5]);
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // send 2nd part of stream
+        assert_eq!(
+            6,
+            s.client
+                .send_application_pipe_stream_data(
+                    &mut s.pipe.client,
+                    client_stream_ids[0],
+                    b"world!",
+                    true
+                )
+                .unwrap()
+        );
+
+
+        s.advance().ok();
+
+        assert_eq!(
+            s.poll_server(),
+            Ok((
+                client_stream_ids[0],
+                Event::ApplicationPipeData(frame_types[0])
+            ))
+        );
+        let mut buf = [0; 1000];
+        assert_eq!(
+            6,
+            s.server
+                .recv_body(&mut s.pipe.server, client_stream_ids[0], &mut buf[..])
+                .unwrap()
+        );
+        assert_eq!(
+            Err(Error::Done),
+            s.server.recv_body(
+                &mut s.pipe.server,
+                client_stream_ids[0],
+                &mut buf[..0]
+            )
+        );
+        assert_eq!(b"world!", &buf[..6]);
         assert_eq!(s.poll_server(), Ok((client_stream_ids[0], Event::Finished)));
+
 
         client_stream_ids.push(
             s.client
