@@ -43,7 +43,7 @@ pub enum Type {
     Push,
     QpackEncoder,
     QpackDecoder,
-    ApplicationPipe(u64),
+    Passthrough(u64),
     Unknown,
 }
 
@@ -56,8 +56,8 @@ impl Type {
             Type::Push => qlog::events::h3::H3StreamType::Push,
             Type::QpackEncoder => qlog::events::h3::H3StreamType::QpackEncode,
             Type::QpackDecoder => qlog::events::h3::H3StreamType::QpackDecode,
-            Type::ApplicationPipe(stream_type) =>
-                qlog::events::h3::H3StreamType::ApplicationPipe(stream_type),
+            Type::Passthrough(stream_type) =>
+                qlog::events::h3::H3StreamType::Passthrough(stream_type),
             Type::Unknown => qlog::events::h3::H3StreamType::Unknown,
         }
     }
@@ -90,7 +90,7 @@ pub enum State {
     Drain,
 
     /// Piping the raw stream data towards the application
-    ApplicationPipe(u64),
+    Passthrough(u64),
 
     /// All data has been read.
     Finished,
@@ -160,8 +160,8 @@ pub struct Stream {
     /// Whether a `Data` event has been triggered for this stream.
     data_event_triggered: bool,
 
-    /// Whether a `ApplicationPipe` event has been triggered for this stream.
-    application_pipe_event_triggered: bool,
+    /// Whether a `Passthrough` event has been triggered for this stream.
+    passthrough_event_triggered: bool,
 
     /// The last `PRIORITY_UPDATE` frame encoded field value, if any.
     last_priority_update: Option<Vec<u8>>,
@@ -204,7 +204,7 @@ impl Stream {
 
             data_event_triggered: false,
 
-            application_pipe_event_triggered: false,
+            passthrough_event_triggered: false,
 
             last_priority_update: None,
         }
@@ -218,9 +218,9 @@ impl Stream {
         self.state
     }
 
-    pub fn become_application_pipe(&mut self, ty: u64) {
-        self.state = State::ApplicationPipe(ty);
-        self.ty = Some(Type::ApplicationPipe(ty));
+    pub fn become_passthrough(&mut self, ty: u64) {
+        self.state = State::Passthrough(ty);
+        self.ty = Some(Type::Passthrough(ty));
     }
 
     /// Sets the stream's type and transitions to the next state.
@@ -240,8 +240,8 @@ impl Stream {
                 State::QpackInstruction
             },
 
-            Type::ApplicationPipe(stream_type) =>
-                State::ApplicationPipe(stream_type),
+            Type::Passthrough(stream_type) =>
+                State::Passthrough(stream_type),
             Type::Unknown => State::Drain,
         };
 
@@ -523,12 +523,12 @@ impl Stream {
         Ok((frame, payload_len))
     }
 
-    /// Tries to read DATA or ApplicationPipe payload from the transport stream.
+    /// Tries to read DATA or Passthrough payload from the transport stream.
     pub fn try_consume_data(
         &mut self, conn: &mut crate::Connection, out: &mut [u8],
     ) -> Result<(usize, bool)> {
         let left = match self.ty {
-            Some(Type::ApplicationPipe(_)) => out.len(),
+            Some(Type::Passthrough(_)) => out.len(),
             _ => std::cmp::min(out.len(), self.state_len - self.state_off),
         };
 
@@ -537,14 +537,14 @@ impl Stream {
 
             Err(e) => {
                 // The stream is not readable anymore, so re-arm the
-                // Data/ApplicationPipe event.
+                // Data/PassthroughData event.
                 if e == crate::Error::Done {
                     match self.state {
                         State::Data => {
                             self.reset_data_event();
                         },
-                        State::ApplicationPipe(_) => {
-                            self.reset_application_pipe_event();
+                        State::Passthrough(_) => {
+                            self.reset_passthrough_event();
                         },
                         _ => (),
                     }
@@ -562,7 +562,7 @@ impl Stream {
         }
 
         if self.state_buffer_complete() &&
-            !matches!(self.ty, Some(Type::ApplicationPipe(_)))
+            !matches!(self.ty, Some(Type::Passthrough(_)))
         {
             self.state_transition(State::FrameType, 1, true)?;
         }
@@ -610,17 +610,17 @@ impl Stream {
         true
     }
 
-    /// Tries to update the ApplicationPipe triggered state for the stream.
+    /// Tries to update the Passthrough triggered state for the stream.
     ///
-    /// This returns `true` if a ApplicationPipe event was not already triggered
+    /// This returns `true` if a Passthrough event was not already triggered
     /// before the last reset, and updates the state. Returns `false`
     /// otherwise.
-    pub fn try_trigger_application_pipe_event(&mut self) -> bool {
-        if self.application_pipe_event_triggered {
+    pub fn try_trigger_passthrough_event(&mut self) -> bool {
+        if self.passthrough_event_triggered {
             return false;
         }
 
-        self.application_pipe_event_triggered = true;
+        self.passthrough_event_triggered = true;
 
         true
     }
@@ -631,8 +631,8 @@ impl Stream {
     }
 
     /// Resets the data triggered state.
-    fn reset_application_pipe_event(&mut self) {
-        self.application_pipe_event_triggered = false;
+    fn reset_passthrough_event(&mut self) {
+        self.passthrough_event_triggered = false;
     }
 
     /// Set the last priority update for the stream.
