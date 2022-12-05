@@ -180,8 +180,8 @@
 //!              // Peer signalled it is going away, handle it.
 //!         },
 //!
-//!         Ok((_, quiche::h3::Event::ApplicationPipeData(_))) => {
-//!             // should not be triggered as no stream was piped from the connection
+//!         Ok((_, quiche::h3::Event::PassthroughData(_))) => {
+//!             // should not be triggered as no stream was passed through from the connection
 //!             unreachable!();
 //!         },
 //!
@@ -248,8 +248,8 @@
 //!              // Peer signalled it is going away, handle it.
 //!         },
 //!
-//!         Ok((_, quiche::h3::Event::ApplicationPipeData(_))) => {
-//!             // should not be triggered as no stream was piped from the connection
+//!         Ok((_, quiche::h3::Event::PassthroughData(_))) => {
+//!             // should not be triggered as no stream was passed through from the connection
 //!             unreachable!();
 //!         },
 //!
@@ -437,8 +437,8 @@ pub enum Error {
     VersionFallback,
 
     /// The specified stream or stream type is not allowed to do
-    /// application-piped stream operations.
-    ApplicationPipeForbidden,
+    /// passthrough stream operations.
+    PassthroughForbidden,
 }
 
 impl Error {
@@ -464,7 +464,7 @@ impl Error {
             Error::MessageError => 0x10E,
             Error::ConnectError => 0x10F,
             Error::VersionFallback => 0x110,
-            Error::ApplicationPipeForbidden => 0x111,
+            Error::PassthroughForbidden => 0x111,
         }
     }
 
@@ -702,15 +702,15 @@ pub enum Event {
     /// [`Done`]: enum.Error.html#variant.Done
     Data,
 
-    /// Raw data was received on an application-piped stream
+    /// Raw data was received on an passthrough stream
     ///
     /// This indicates that the application can use the [`recv_body()`] method
     /// to retrieve the data from the stream in the same way it is used for
     /// Data events.
     ///
-    /// The u64 parameter specifies the HTTP3 stream type of the piped stream.
+    /// The u64 parameter specifies the HTTP3 stream type of the passthrough stream.
     /// (note that this value is different from the stream ID)
-    ApplicationPipeData(u64),
+    PassthroughData(u64),
 
     /// Stream was closed,
     Finished,
@@ -897,9 +897,9 @@ pub struct Connection {
 
     dgram_event_triggered: bool,
 
-    piped_stream_types: HashSet<u64>,
-    piped_query_frames: HashSet<u64>,
-    piped_stream_ids: HashSet<u64>,
+    passthrough_stream_types: HashSet<u64>,
+    passthrough_query_frames: HashSet<u64>,
+    passthrough_stream_ids: HashSet<u64>,
 }
 
 impl Connection {
@@ -965,21 +965,21 @@ impl Connection {
 
             dgram_event_triggered: false,
 
-            piped_stream_types: HashSet::new(),
-            piped_query_frames: HashSet::new(),
-            piped_stream_ids: HashSet::new(),
+            passthrough_stream_types: HashSet::new(),
+            passthrough_query_frames: HashSet::new(),
+            passthrough_stream_ids: HashSet::new(),
         })
     }
 
-    /// Specifies custom H3 stream types for which streams will be piped to
+    /// Specifies custom H3 stream types for which streams will be passed through to
     /// the application. The raw data of these streams will be directly
     /// forwarded to the application without any H3 frame parsing.
     ///
-    /// Only undefined types can be piped to the application. Classical
+    /// Only undefined types can be passed through to the application. Classical
     /// H3 stream types (e.g. Control, Push, QPACK, ...) cannot be
-    /// piped to the application.
-    pub fn set_piped_query_frame_types(
-        &mut self, piped_query_frames_types: HashSet<u64>,
+    /// passed through to the application.
+    pub fn set_passthrough_query_frame_types(
+        &mut self, passthrough_query_frames_types: HashSet<u64>,
     ) -> Result<()> {
         let forbidden_query_frame_types = std::collections::HashSet::from([
             frame::CANCEL_PUSH_FRAME_TYPE_ID,
@@ -990,23 +990,23 @@ impl Connection {
             frame::PRIORITY_UPDATE_FRAME_PUSH_TYPE_ID,
             frame::PRIORITY_UPDATE_FRAME_REQUEST_TYPE_ID,
         ]);
-        if !piped_query_frames_types.is_disjoint(&forbidden_query_frame_types) {
-            return Err(Error::ApplicationPipeForbidden);
+        if !passthrough_query_frames_types.is_disjoint(&forbidden_query_frame_types) {
+            return Err(Error::PassthroughForbidden);
         }
         // TODO: avoid piping classical H3 stream types
-        self.piped_query_frames = piped_query_frames_types;
+        self.passthrough_query_frames = passthrough_query_frames_types;
         Ok(())
     }
 
-    /// Specifies custom H3 stream types for which streams will be piped to
+    /// Specifies custom H3 stream types for which streams will be passed through to
     /// the application. The raw data of these streams will be directly
     /// forwarded to the application without any H3 frame parsing.
     ///
-    /// Only undefined types can be piped to the application. Classical
+    /// Only undefined types can be passed through to the application. Classical
     /// H3 stream types (e.g. Control, Push, QPACK, ...) cannot be
-    /// piped to the application.
-    pub fn set_piped_stream_types(
-        &mut self, piped_stream_types: HashSet<u64>,
+    /// passed through to the application.
+    pub fn set_passthrough_stream_types(
+        &mut self, passthrough_stream_types: HashSet<u64>,
     ) -> Result<()> {
         let forbidden_stream_types = std::collections::HashSet::from([
             stream::HTTP3_CONTROL_STREAM_TYPE_ID,
@@ -1014,11 +1014,11 @@ impl Connection {
             stream::QPACK_ENCODER_STREAM_TYPE_ID,
             stream::QPACK_DECODER_STREAM_TYPE_ID,
         ]);
-        if !piped_stream_types.is_disjoint(&forbidden_stream_types) {
-            return Err(Error::ApplicationPipeForbidden);
+        if !passthrough_stream_types.is_disjoint(&forbidden_stream_types) {
+            return Err(Error::PassthroughForbidden);
         }
         // TODO: avoid piping classical H3 stream types
-        self.piped_stream_types = piped_stream_types;
+        self.passthrough_stream_types = passthrough_stream_types;
         Ok(())
     }
 
@@ -1073,55 +1073,55 @@ impl Connection {
         Ok(http3_conn)
     }
 
-    /// Opens a new unidirectional application-piped stream.
+    /// Opens a new unidirectional passthrough stream.
     ///
     /// On success the new stream ID is returned.
     ///
-    /// The [`ApplicationPipeForbidden`] error is returned when
-    /// the specified stream type cannot be used for application-piped
+    /// The [`PassthroughForbidden`] error is returned when
+    /// the specified stream type cannot be used for passthrough
     /// streams.
     ///
-    /// [`ApplicationPipeForbidden`]: enum.Error.html#variant.ApplicationPipeForbidden
-    pub fn open_application_pipe_uni_stream(
+    /// [`PassthroughForbidden`]: enum.Error.html#variant.PassthroughForbidden
+    pub fn open_passthrough_uni_stream(
         &mut self, conn: &mut super::Connection, stream_type: u64,
     ) -> Result<u64> {
-        if !self.piped_stream_types.contains(&stream_type) {
-            return Err(Error::ApplicationPipeForbidden);
+        if !self.passthrough_stream_types.contains(&stream_type) {
+            return Err(Error::PassthroughForbidden);
         }
         let stream_id = self.open_uni_stream(conn, stream_type)?;
         let mut stream = stream::Stream::new(stream_id, true);
         stream.initialize_local();
         self.streams.insert(stream_id, stream);
-        self.pipe_stream(stream_id, stream_type)?;
+        self.passthrough_stream(stream_id, stream_type)?;
         Ok(stream_id)
     }
 
-    fn pipe_stream(&mut self, stream_id: u64, ty: u64) -> Result<()> {
+    fn passthrough_stream(&mut self, stream_id: u64, ty: u64) -> Result<()> {
         let stream = self
             .streams
             .get_mut(&stream_id)
-            .ok_or(Error::ApplicationPipeForbidden)?;
-        self.piped_stream_ids.insert(stream_id);
-        stream.become_application_pipe(ty);
+            .ok_or(Error::PassthroughForbidden)?;
+        self.passthrough_stream_ids.insert(stream_id);
+        stream.become_passthrough(ty);
         Ok(())
     }
 
-    /// Opens a new bidirectional application-piped stream.
+    /// Opens a new bidirectional passthrough stream.
     ///
     /// Server-initiated bidi streams are currently unsupported.
     ///
     /// On success the new stream ID is returned.
     ///
-    /// The [`ApplicationPipeForbidden`] error is returned when
-    /// the specified stream type cannot be used for application-piped
+    /// The [`PassthroughForbidden`] error is returned when
+    /// the specified stream type cannot be used for passthrough
     /// streams.
     ///
-    /// [`ApplicationPipeForbidden`]: enum.Error.html#variant.ApplicationPipeForbidden
-    pub fn open_application_pipe_frame_on_request_stream(
+    /// [`PassthroughForbidden`]: enum.Error.html#variant.PassthroughForbidden
+    pub fn open_passthrough_frame_on_request_stream(
         &mut self, conn: &mut super::Connection, frame_type: u64,
     ) -> Result<u64> {
-        if !self.piped_query_frames.contains(&frame_type) || self.is_server {
-            return Err(Error::ApplicationPipeForbidden);
+        if !self.passthrough_query_frames.contains(&frame_type) || self.is_server {
+            return Err(Error::PassthroughForbidden);
         }
 
         let mut d = [0; 8];
@@ -1139,7 +1139,7 @@ impl Connection {
         let mut stream = stream::Stream::new(stream_id, true);
         stream.initialize_local();
         self.streams.insert(stream_id, stream);
-        self.pipe_stream(stream_id, frame_type)?;
+        self.passthrough_stream(stream_id, frame_type)?;
         Ok(stream_id)
     }
 
@@ -1360,8 +1360,8 @@ impl Connection {
         Ok(())
     }
 
-    /// Sends data on an application-piped stream. The specified stream
-    /// must have been opened previously as an application-piped stream.
+    /// Sends data on an passthrough stream. The specified stream
+    /// must have been opened previously as an passthrough stream.
     ///
     /// On success the number of bytes written is returned, or [`Done`] if no
     /// bytes could be written (e.g. because the stream is blocked).
@@ -1374,17 +1374,17 @@ impl Connection {
     /// application should retry the operation once the stream is reported as
     /// writable again.
     ///
-    /// The [`ApplicationPipeForbidden`] error is returned when the specified
-    /// stream cannot be used for application-piped streams.
+    /// The [`PassthroughForbidden`] error is returned when the specified
+    /// stream cannot be used for passthrough streams.
     ///
-    /// [`ApplicationPipeForbidden`]: enum.Error.html#variant.ApplicationPipeForbidden
+    /// [`PassthroughForbidden`]: enum.Error.html#variant.PassthroughForbidden
     /// [`Done`]: enum.Error.html#variant.Done
-    pub fn send_application_pipe_stream_data(
+    pub fn send_passthrough_stream_data(
         &mut self, conn: &mut super::Connection, stream_id: u64, data: &[u8],
         fin: bool,
     ) -> Result<usize> {
-        if !self.piped_stream_ids.contains(&stream_id) {
-            return Err(Error::ApplicationPipeForbidden);
+        if !self.passthrough_stream_ids.contains(&stream_id) {
+            return Err(Error::PassthroughForbidden);
         }
 
         if self.streams.get(&stream_id).is_none() {
@@ -1433,7 +1433,7 @@ impl Connection {
         let written = conn.stream_send(stream_id, &data[..data_len], fin)?;
 
         trace!(
-            "{} tx frm APPLICATION_PIPE stream={} len={} fin={}",
+            "{} tx frm PASSTHROUGH stream={} len={} fin={}",
             conn.trace_id(),
             stream_id,
             written,
@@ -1670,11 +1670,11 @@ impl Connection {
         Err(Error::Done)
     }
 
-    /// Reads request/response body or application pipe data into the provided
+    /// Reads request/response body or passthrough stream data into the provided
     /// buffer.
     ///
     /// Applications should call this method whenever the [`poll()`] method
-    /// returns a [`Data`] or [`ApplicationPipeData`] event.
+    /// returns a [`Data`] or [`PassthroughData`] event.
     ///
     /// On success the amount of bytes read is returned, or [`Done`] if there
     /// is no data to read.
@@ -1692,7 +1692,7 @@ impl Connection {
         while total < out.len() {
             let stream = self.streams.get_mut(&stream_id).ok_or(Error::Done)?;
             if stream.state() != stream::State::Data &&
-                !matches!(stream.state(), stream::State::ApplicationPipe(_))
+                !matches!(stream.state(), stream::State::Passthrough(_))
             {
                 break;
             }
@@ -2094,9 +2094,9 @@ impl Connection {
             // TODO: Server push
             stream::HTTP3_PUSH_STREAM_TYPE_ID => (),
 
-            // Either application piped streams or GREASE streams
+            // Either passthrough streams or GREASE streams
             _ => {
-                if !self.piped_stream_types.contains(&ty) {
+                if !self.passthrough_stream_types.contains(&ty) {
                     // Anything else is a GREASE stream, so make it the least
                     // important.
                     conn.stream_priority(stream_id, 255, true)?;
@@ -2432,9 +2432,9 @@ impl Connection {
                     let mut ty = stream::Type::deserialize(varint)?;
 
                     if ty == stream::Type::Unknown &&
-                        self.piped_stream_types.contains(&varint)
+                        self.passthrough_stream_types.contains(&varint)
                     {
-                        ty = stream::Type::ApplicationPipe(varint);
+                        ty = stream::Type::Passthrough(varint);
                     }
 
                     if let Err(e) = stream.set_ty(ty) {
@@ -2529,8 +2529,8 @@ impl Connection {
                             // TODO: we MAY send STOP_SENDING
                         },
 
-                        stream::Type::ApplicationPipe(_) => {
-                            // Application pipes do not require actions from h3
+                        stream::Type::Passthrough(_) => {
+                            // Passthrough streams do not require actions from h3
                         },
 
                         stream::Type::Request => unreachable!(),
@@ -2562,15 +2562,15 @@ impl Connection {
                     };
 
                     if let Some(stream::Type::Request) = stream.ty() {
-                        if self.piped_query_frames.contains(&varint) {
-                            self.pipe_stream(stream_id, varint)?;
+                        if self.passthrough_query_frames.contains(&varint) {
+                            self.passthrough_stream(stream_id, varint)?;
                             continue;
                         }
                     }
                     match stream.set_frame_type(varint) {
-                        // handle the piped frames types: if a frame type
-                        // is piped to the applciation, the stream becomes
-                        // an application-pipe stream
+                        // handle the passthrough frames types: if a frame type
+                        // is passed through to the applciation, the stream becomes
+                        // an passthrough stream
                         Err(Error::FrameUnexpected) => {
                             let msg = format!("Unexpected frame type {}", varint);
 
@@ -2705,19 +2705,19 @@ impl Connection {
                 },
 
                 stream::State::Finished => break,
-                stream::State::ApplicationPipe(stream_type) => {
+                stream::State::Passthrough(stream_type) => {
                     // Do not emit events when not polling.
                     if !polling {
                         break;
                     }
 
-                    if !stream.try_trigger_application_pipe_event() {
+                    if !stream.try_trigger_passthrough_event() {
                         break;
                     }
 
                     return Ok((
                         stream_id,
-                        Event::ApplicationPipeData(stream_type),
+                        Event::PassthroughData(stream_type),
                     ));
                 },
             }
@@ -2740,7 +2740,7 @@ impl Connection {
         match stream.ty() {
             Some(stream::Type::Request) |
             Some(stream::Type::Push) |
-            Some(stream::Type::ApplicationPipe(_)) => {
+            Some(stream::Type::Passthrough(_)) => {
                 stream.finished();
 
                 self.finished_streams.push_back(stream_id);
@@ -4701,80 +4701,80 @@ mod tests {
         let mut s = Session::default().unwrap();
         assert_eq!(
             s.client
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_CONTROL_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
         assert_eq!(
             s.client
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_PUSH_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
         assert_eq!(
             s.client
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::QPACK_ENCODER_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
         assert_eq!(
             s.client
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::QPACK_DECODER_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
         assert_eq!(
             s.client
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_CONTROL_STREAM_TYPE_ID,
                     stream::HTTP3_PUSH_STREAM_TYPE_ID,
                     stream::QPACK_ENCODER_STREAM_TYPE_ID,
                     stream::QPACK_DECODER_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
 
         assert_eq!(
             s.server
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_CONTROL_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
         assert_eq!(
             s.server
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_PUSH_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
         assert_eq!(
             s.server
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::QPACK_ENCODER_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
         assert_eq!(
             s.server
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::QPACK_DECODER_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
         assert_eq!(
             s.server
-                .set_piped_stream_types(std::collections::HashSet::from([
+                .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_CONTROL_STREAM_TYPE_ID,
                     stream::HTTP3_PUSH_STREAM_TYPE_ID,
                     stream::QPACK_ENCODER_STREAM_TYPE_ID,
                     stream::QPACK_DECODER_STREAM_TYPE_ID
                 ])),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         );
     }
 
@@ -4908,8 +4908,8 @@ mod tests {
     }
 
     #[test]
-    /// Server send application-piped streams data
-    fn server_application_pipe_data() {
+    /// Server send passthrough streams data
+    fn server_passthrough_data() {
         let mut config = crate::Config::new(crate::PROTOCOL_VERSION).unwrap();
         config
             .load_cert_chain_from_pem_file("examples/cert.crt")
@@ -4933,17 +4933,17 @@ mod tests {
 
         let stream_types = [42u64, 420u64];
         s.server
-            .set_piped_stream_types(std::collections::HashSet::from(stream_types))
+            .set_passthrough_stream_types(std::collections::HashSet::from(stream_types))
             .unwrap();
         s.client
-            .set_piped_stream_types(std::collections::HashSet::from(stream_types))
+            .set_passthrough_stream_types(std::collections::HashSet::from(stream_types))
             .unwrap();
 
         let mut server_stream_ids = vec![];
 
         server_stream_ids.push(
             s.server
-                .open_application_pipe_uni_stream(
+                .open_passthrough_uni_stream(
                     &mut s.pipe.server,
                     stream_types[0],
                 )
@@ -4953,7 +4953,7 @@ mod tests {
         assert_eq!(
             5,
             s.server
-                .send_application_pipe_stream_data(
+                .send_passthrough_stream_data(
                     &mut s.pipe.server,
                     server_stream_ids[0],
                     b"hello",
@@ -4967,7 +4967,7 @@ mod tests {
             s.poll_client(),
             Ok((
                 server_stream_ids[0],
-                Event::ApplicationPipeData(stream_types[0])
+                Event::PassthroughData(stream_types[0])
             ))
         );
         let mut buf = [0; 1000];
@@ -4990,7 +4990,7 @@ mod tests {
 
         server_stream_ids.push(
             s.server
-                .open_application_pipe_uni_stream(
+                .open_passthrough_uni_stream(
                     &mut s.pipe.server,
                     stream_types[1],
                 )
@@ -5000,7 +5000,7 @@ mod tests {
         assert_eq!(
             6,
             s.server
-                .send_application_pipe_stream_data(
+                .send_passthrough_stream_data(
                     &mut s.pipe.server,
                     server_stream_ids[1],
                     b"world!",
@@ -5014,7 +5014,7 @@ mod tests {
             s.poll_client(),
             Ok((
                 server_stream_ids[1],
-                Event::ApplicationPipeData(stream_types[1])
+                Event::PassthroughData(stream_types[1])
             ))
         );
         let mut buf = [0; 1000];
@@ -5038,7 +5038,7 @@ mod tests {
 
     #[test]
     /// Server send application-piped streams data
-    fn client_application_pipe_data_bidi() {
+    fn client_passthrough_data_bidi() {
         let mut config = crate::Config::new(crate::PROTOCOL_VERSION).unwrap();
         config
             .load_cert_chain_from_pem_file("examples/cert.crt")
@@ -5062,12 +5062,12 @@ mod tests {
 
         let frame_types = [42u64, 420u64];
         s.server
-            .set_piped_query_frame_types(std::collections::HashSet::from(
+            .set_passthrough_query_frame_types(std::collections::HashSet::from(
                 frame_types,
             ))
             .unwrap();
         s.client
-            .set_piped_query_frame_types(std::collections::HashSet::from(
+            .set_passthrough_query_frame_types(std::collections::HashSet::from(
                 frame_types,
             ))
             .unwrap();
@@ -5076,7 +5076,7 @@ mod tests {
 
         client_stream_ids.push(
             s.client
-                .open_application_pipe_frame_on_request_stream(
+                .open_passthrough_frame_on_request_stream(
                     &mut s.pipe.client,
                     frame_types[0],
                 )
@@ -5086,7 +5086,7 @@ mod tests {
         assert_eq!(
             5,
             s.client
-                .send_application_pipe_stream_data(
+                .send_passthrough_stream_data(
                     &mut s.pipe.client,
                     client_stream_ids[0],
                     b"hello",
@@ -5100,7 +5100,7 @@ mod tests {
             s.poll_server(),
             Ok((
                 client_stream_ids[0],
-                Event::ApplicationPipeData(frame_types[0])
+                Event::PassthroughData(frame_types[0])
             ))
         );
         let mut buf = [0; 1000];
@@ -5125,7 +5125,7 @@ mod tests {
         assert_eq!(
             6,
             s.client
-                .send_application_pipe_stream_data(
+                .send_passthrough_stream_data(
                     &mut s.pipe.client,
                     client_stream_ids[0],
                     b"world!",
@@ -5141,7 +5141,7 @@ mod tests {
             s.poll_server(),
             Ok((
                 client_stream_ids[0],
-                Event::ApplicationPipeData(frame_types[0])
+                Event::PassthroughData(frame_types[0])
             ))
         );
         let mut buf = [0; 1000];
@@ -5165,7 +5165,7 @@ mod tests {
 
         client_stream_ids.push(
             s.client
-                .open_application_pipe_frame_on_request_stream(
+                .open_passthrough_frame_on_request_stream(
                     &mut s.pipe.client,
                     frame_types[1],
                 )
@@ -5175,7 +5175,7 @@ mod tests {
         assert_eq!(
             6,
             s.client
-                .send_application_pipe_stream_data(
+                .send_passthrough_stream_data(
                     &mut s.pipe.client,
                     client_stream_ids[1],
                     b"world!",
@@ -5189,7 +5189,7 @@ mod tests {
             s.poll_server(),
             Ok((
                 client_stream_ids[1],
-                Event::ApplicationPipeData(frame_types[1])
+                Event::PassthroughData(frame_types[1])
             ))
         );
         let mut buf = [0; 1000];
@@ -5215,7 +5215,7 @@ mod tests {
         assert_eq!(
             3,
             s.server
-                .send_application_pipe_stream_data(
+                .send_passthrough_stream_data(
                     &mut s.pipe.server,
                     client_stream_ids[0],
                     b"bye",
@@ -5229,7 +5229,7 @@ mod tests {
             s.poll_client(),
             Ok((
                 client_stream_ids[0],
-                Event::ApplicationPipeData(frame_types[0])
+                Event::PassthroughData(frame_types[0])
             ))
         );
         let mut buf = [0; 1000];
@@ -5251,11 +5251,11 @@ mod tests {
         assert_eq!(s.poll_client(), Ok((client_stream_ids[0], Event::Finished)));
 
         assert!(matches!(
-            s.server.open_application_pipe_frame_on_request_stream(
+            s.server.open_passthrough_frame_on_request_stream(
                 &mut s.pipe.server,
                 frame_types[0],
             ),
-            Err(Error::ApplicationPipeForbidden)
+            Err(Error::PassthroughForbidden)
         ));
     }
 

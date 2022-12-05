@@ -1501,7 +1501,7 @@ impl HttpConn for Http3Conn {
                     );
                 },
 
-                Ok((_, quiche::h3::Event::ApplicationPipeData(_))) => todo!(),
+                Ok((_, quiche::h3::Event::PassthroughData(_))) => todo!(),
 
                 Err(quiche::h3::Error::Done) => {
                     break;
@@ -1719,7 +1719,7 @@ impl HttpConn for Http3Conn {
                         .send_goaway(conn, self.largest_processed_request)?;
                 },
 
-                Ok((_, quiche::h3::Event::ApplicationPipeData(_))) => todo!(),
+                Ok((_, quiche::h3::Event::PassthroughData(_))) => todo!(),
 
                 Err(quiche::h3::Error::Done) => {
                     break;
