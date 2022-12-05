@@ -531,6 +531,9 @@ pub struct Config {
     /// settings above
     additional_settings: Option<Vec<(u64, u64)>>,
     raw_settings: Option<Vec<(u64, u64)>>,
+    ///
+    passthrough_stream_types: Option<HashSet<u64>>,
+    passthrough_query_frames_types: Option<HashSet<u64>>,
 }
 
 impl Config {
@@ -543,6 +546,8 @@ impl Config {
             connect_protocol_enabled: None,
             additional_settings: None,
             raw_settings: None,
+            passthrough_stream_types: None,
+            passthrough_query_frames_types: None,
         })
     }
 
@@ -589,6 +594,57 @@ impl Config {
     /// The default value is no raw settings.
     pub fn set_additional_settings(&mut self, v: Vec<(u64, u64)>) {
         self.additional_settings = Some(v.clone())
+    }
+
+    /// Specifies custom H3 stream types for which streams will be passed through to
+    /// the application. The raw data of these streams will be directly
+    /// forwarded to the application without any H3 frame parsing.
+    ///
+    /// Only undefined types can be passed through to the application. Classical
+    /// H3 stream types (e.g. Control, Push, QPACK, ...) cannot be
+    /// passed through to the application.
+    pub fn set_passthrough_query_frame_types(
+        &mut self, passthrough_query_frames_types: HashSet<u64>,
+    ) -> Result<()> {
+        let forbidden_query_frame_types = std::collections::HashSet::from([
+            frame::CANCEL_PUSH_FRAME_TYPE_ID,
+            frame::DATA_FRAME_TYPE_ID,
+            frame::GOAWAY_FRAME_TYPE_ID,
+            frame::MAX_PUSH_FRAME_TYPE_ID,
+            frame::HEADERS_FRAME_TYPE_ID,
+            frame::PRIORITY_UPDATE_FRAME_PUSH_TYPE_ID,
+            frame::PRIORITY_UPDATE_FRAME_REQUEST_TYPE_ID,
+        ]);
+        if !passthrough_query_frames_types.is_disjoint(&forbidden_query_frame_types) {
+            return Err(Error::PassthroughForbidden);
+        }
+        // TODO: avoid piping classical H3 stream types
+        self.passthrough_query_frames_types = Some(passthrough_query_frames_types);
+        Ok(())
+    }
+
+    /// Specifies custom H3 stream types for which streams will be passed through to
+    /// the application. The raw data of these streams will be directly
+    /// forwarded to the application without any H3 frame parsing.
+    ///
+    /// Only undefined types can be passed through to the application. Classical
+    /// H3 stream types (e.g. Control, Push, QPACK, ...) cannot be
+    /// passed through to the application.
+    pub fn set_passthrough_stream_types(
+        &mut self, passthrough_stream_types: HashSet<u64>,
+    ) -> Result<()> {
+        let forbidden_stream_types = std::collections::HashSet::from([
+            stream::HTTP3_CONTROL_STREAM_TYPE_ID,
+            stream::HTTP3_PUSH_STREAM_TYPE_ID,
+            stream::QPACK_ENCODER_STREAM_TYPE_ID,
+            stream::QPACK_DECODER_STREAM_TYPE_ID,
+        ]);
+        if !passthrough_stream_types.is_disjoint(&forbidden_stream_types) {
+            return Err(Error::PassthroughForbidden);
+        }
+        // TODO: avoid piping classical H3 stream types
+        self.passthrough_stream_types = Some(passthrough_stream_types);
+        Ok(())
     }
 }
 
@@ -883,7 +939,7 @@ pub struct Connection {
     peer_goaway_id: Option<u64>,
 
     passthrough_stream_types: HashSet<u64>,
-    passthrough_query_frames: HashSet<u64>,
+    passthrough_query_frames_types: HashSet<u64>,
     passthrough_stream_ids: HashSet<u64>,
 }
 
@@ -948,62 +1004,10 @@ impl Connection {
             local_goaway_id: None,
             peer_goaway_id: None,
 
-
-            passthrough_stream_types: HashSet::new(),
-            passthrough_query_frames: HashSet::new(),
+            passthrough_stream_types: if config.passthrough_stream_types.is_none() { HashSet::new() } else { config.passthrough_stream_types.clone().unwrap() },
+            passthrough_query_frames_types: if config.passthrough_query_frames_types.is_none() { HashSet::new() } else { config.passthrough_query_frames_types.clone().unwrap() },
             passthrough_stream_ids: HashSet::new(),
         })
-    }
-
-    /// Specifies custom H3 stream types for which streams will be passed through to
-    /// the application. The raw data of these streams will be directly
-    /// forwarded to the application without any H3 frame parsing.
-    ///
-    /// Only undefined types can be passed through to the application. Classical
-    /// H3 stream types (e.g. Control, Push, QPACK, ...) cannot be
-    /// passed through to the application.
-    pub fn set_passthrough_query_frame_types(
-        &mut self, passthrough_query_frames_types: HashSet<u64>,
-    ) -> Result<()> {
-        let forbidden_query_frame_types = std::collections::HashSet::from([
-            frame::CANCEL_PUSH_FRAME_TYPE_ID,
-            frame::DATA_FRAME_TYPE_ID,
-            frame::GOAWAY_FRAME_TYPE_ID,
-            frame::MAX_PUSH_FRAME_TYPE_ID,
-            frame::HEADERS_FRAME_TYPE_ID,
-            frame::PRIORITY_UPDATE_FRAME_PUSH_TYPE_ID,
-            frame::PRIORITY_UPDATE_FRAME_REQUEST_TYPE_ID,
-        ]);
-        if !passthrough_query_frames_types.is_disjoint(&forbidden_query_frame_types) {
-            return Err(Error::PassthroughForbidden);
-        }
-        // TODO: avoid piping classical H3 stream types
-        self.passthrough_query_frames = passthrough_query_frames_types;
-        Ok(())
-    }
-
-    /// Specifies custom H3 stream types for which streams will be passed through to
-    /// the application. The raw data of these streams will be directly
-    /// forwarded to the application without any H3 frame parsing.
-    ///
-    /// Only undefined types can be passed through to the application. Classical
-    /// H3 stream types (e.g. Control, Push, QPACK, ...) cannot be
-    /// passed through to the application.
-    pub fn set_passthrough_stream_types(
-        &mut self, passthrough_stream_types: HashSet<u64>,
-    ) -> Result<()> {
-        let forbidden_stream_types = std::collections::HashSet::from([
-            stream::HTTP3_CONTROL_STREAM_TYPE_ID,
-            stream::HTTP3_PUSH_STREAM_TYPE_ID,
-            stream::QPACK_ENCODER_STREAM_TYPE_ID,
-            stream::QPACK_DECODER_STREAM_TYPE_ID,
-        ]);
-        if !passthrough_stream_types.is_disjoint(&forbidden_stream_types) {
-            return Err(Error::PassthroughForbidden);
-        }
-        // TODO: avoid piping classical H3 stream types
-        self.passthrough_stream_types = passthrough_stream_types;
-        Ok(())
     }
 
     /// Creates a new HTTP/3 connection using the provided QUIC connection.
@@ -1104,7 +1108,7 @@ impl Connection {
     pub fn open_passthrough_frame_on_request_stream(
         &mut self, conn: &mut super::Connection, frame_type: u64,
     ) -> Result<u64> {
-        if !self.passthrough_query_frames.contains(&frame_type) || self.is_server {
+        if !self.passthrough_query_frames_types.contains(&frame_type) || self.is_server {
             return Err(Error::PassthroughForbidden);
         }
 
@@ -2461,7 +2465,7 @@ impl Connection {
                     };
 
                     if let Some(stream::Type::Request) = stream.ty() {
-                        if self.passthrough_query_frames.contains(&varint) {
+                        if self.passthrough_query_frames_types.contains(&varint) {
                             self.passthrough_stream(stream_id, varint)?;
                             continue;
                         }
@@ -4692,37 +4696,52 @@ mod tests {
     #[test]
     /// Pipes classical stream types, which is forbidden
     fn piping_classical_stream_types() {
-        let mut s = Session::default().unwrap();
+        let mut config = crate::Config::new(crate::PROTOCOL_VERSION).unwrap();
+        config.load_cert_chain_from_pem_file("examples/cert.crt").unwrap();
+        config.load_priv_key_from_pem_file("examples/cert.key").unwrap();
+        config.set_application_protos(&[b"h3"]).unwrap();
+        config.set_initial_max_data(1500);
+        config.set_initial_max_stream_data_bidi_local(150);
+        config.set_initial_max_stream_data_bidi_remote(150);
+        config.set_initial_max_stream_data_uni(150);
+        config.set_initial_max_streams_bidi(5);
+        config.set_initial_max_streams_uni(5);
+        config.verify_peer(false);
+        config.enable_dgram(true, 3, 3);
+        config.set_ack_delay_exponent(8);
+
+        let mut h3_config = Config::new().unwrap();
+        
         assert_eq!(
-            s.client
+            h3_config
                 .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_CONTROL_STREAM_TYPE_ID
                 ])),
             Err(Error::PassthroughForbidden)
         );
         assert_eq!(
-            s.client
+            h3_config
                 .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_PUSH_STREAM_TYPE_ID
                 ])),
             Err(Error::PassthroughForbidden)
         );
         assert_eq!(
-            s.client
+            h3_config
                 .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::QPACK_ENCODER_STREAM_TYPE_ID
                 ])),
             Err(Error::PassthroughForbidden)
         );
         assert_eq!(
-            s.client
+            h3_config
                 .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::QPACK_DECODER_STREAM_TYPE_ID
                 ])),
             Err(Error::PassthroughForbidden)
         );
         assert_eq!(
-            s.client
+            h3_config
                 .set_passthrough_stream_types(std::collections::HashSet::from([
                     stream::HTTP3_CONTROL_STREAM_TYPE_ID,
                     stream::HTTP3_PUSH_STREAM_TYPE_ID,
@@ -4732,44 +4751,8 @@ mod tests {
             Err(Error::PassthroughForbidden)
         );
 
-        assert_eq!(
-            s.server
-                .set_passthrough_stream_types(std::collections::HashSet::from([
-                    stream::HTTP3_CONTROL_STREAM_TYPE_ID
-                ])),
-            Err(Error::PassthroughForbidden)
-        );
-        assert_eq!(
-            s.server
-                .set_passthrough_stream_types(std::collections::HashSet::from([
-                    stream::HTTP3_PUSH_STREAM_TYPE_ID
-                ])),
-            Err(Error::PassthroughForbidden)
-        );
-        assert_eq!(
-            s.server
-                .set_passthrough_stream_types(std::collections::HashSet::from([
-                    stream::QPACK_ENCODER_STREAM_TYPE_ID
-                ])),
-            Err(Error::PassthroughForbidden)
-        );
-        assert_eq!(
-            s.server
-                .set_passthrough_stream_types(std::collections::HashSet::from([
-                    stream::QPACK_DECODER_STREAM_TYPE_ID
-                ])),
-            Err(Error::PassthroughForbidden)
-        );
-        assert_eq!(
-            s.server
-                .set_passthrough_stream_types(std::collections::HashSet::from([
-                    stream::HTTP3_CONTROL_STREAM_TYPE_ID,
-                    stream::HTTP3_PUSH_STREAM_TYPE_ID,
-                    stream::QPACK_ENCODER_STREAM_TYPE_ID,
-                    stream::QPACK_DECODER_STREAM_TYPE_ID
-                ])),
-            Err(Error::PassthroughForbidden)
-        );
+        Session::with_configs(&mut config, &h3_config).unwrap();
+
     }
 
     #[test]
@@ -4920,18 +4903,17 @@ mod tests {
         config.set_initial_max_streams_uni(6);
         config.verify_peer(false);
 
+        let stream_types = [42u64, 420u64];
         let mut h3_config = Config::new().unwrap();
+        h3_config
+            .set_passthrough_stream_types(std::collections::HashSet::from(stream_types))
+            .unwrap();
+        h3_config
+            .set_passthrough_stream_types(std::collections::HashSet::from(stream_types))
+            .unwrap();
 
         let mut s = Session::with_configs(&mut config, &mut h3_config).unwrap();
         s.handshake().unwrap();
-
-        let stream_types = [42u64, 420u64];
-        s.server
-            .set_passthrough_stream_types(std::collections::HashSet::from(stream_types))
-            .unwrap();
-        s.client
-            .set_passthrough_stream_types(std::collections::HashSet::from(stream_types))
-            .unwrap();
 
         let mut server_stream_ids = vec![];
 
@@ -5049,22 +5031,21 @@ mod tests {
         config.set_initial_max_streams_uni(6);
         config.verify_peer(false);
 
+        let frame_types = [42u64, 420u64];
         let mut h3_config = Config::new().unwrap();
+        h3_config
+            .set_passthrough_query_frame_types(std::collections::HashSet::from(
+                frame_types,
+            ))
+            .unwrap();
+            h3_config
+            .set_passthrough_query_frame_types(std::collections::HashSet::from(
+                frame_types,
+            ))
+            .unwrap();
 
         let mut s = Session::with_configs(&mut config, &mut h3_config).unwrap();
         s.handshake().unwrap();
-
-        let frame_types = [42u64, 420u64];
-        s.server
-            .set_passthrough_query_frame_types(std::collections::HashSet::from(
-                frame_types,
-            ))
-            .unwrap();
-        s.client
-            .set_passthrough_query_frame_types(std::collections::HashSet::from(
-                frame_types,
-            ))
-            .unwrap();
 
         let mut client_stream_ids = vec![];
 
