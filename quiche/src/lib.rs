@@ -1329,6 +1329,12 @@ pub struct Connection {
     /// Total number of packets sent with data retransmitted.
     retrans_count: usize,
 
+    /// Total number of source symbols recovered through FEC
+    recov_count: usize,
+
+    /// Total number of repair symbols received
+    repair_symbols_count: usize,
+
     /// Total number of bytes received from the peer.
     rx_data: u64,
 
@@ -1814,6 +1820,8 @@ impl Connection {
             sent_count: 0,
             lost_count: 0,
             retrans_count: 0,
+            recov_count: 0,
+            repair_symbols_count: 0,
             sent_bytes: 0,
             recv_bytes: 0,
             lost_bytes: 0,
@@ -6835,6 +6843,8 @@ impl Connection {
             sent: self.sent_count,
             lost: self.lost_count,
             retrans: self.retrans_count,
+            recov: self.recov_count,
+            repair: self.repair_symbols_count,
             sent_bytes: self.sent_bytes,
             recv_bytes: self.recv_bytes,
             lost_bytes: self.lost_bytes,
@@ -7727,11 +7737,13 @@ impl Connection {
             },
 
             frame::Frame::Repair { repair_symbol } => {
+                self.repair_symbols_count += 1;
                 match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
                     Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
                     Err(err) => return Err(Error::from(err)),
                     Ok((_, decoded_symbols)) => {
                         for decoded_symbol in decoded_symbols {
+                            self.recov_count += 1;
                             trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
                             self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
                         }
@@ -7745,6 +7757,7 @@ impl Connection {
                     Err(err) => return Err(Error::from(err)),
                     Ok(decoded_symbols) => {
                         for decoded_symbol in decoded_symbols {
+                            self.recov_count += 1;
                             trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
                             self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
                         }
@@ -8419,6 +8432,12 @@ pub struct Stats {
 
     /// The number of sent QUIC packets with retransmitted data.
     pub retrans: usize,
+
+    /// The number of source symbols recovered using FEC
+    pub recov: usize,
+
+    /// The number of repair symbols received
+    pub repair: usize,
 
     /// The number of sent bytes.
     pub sent_bytes: u64,
