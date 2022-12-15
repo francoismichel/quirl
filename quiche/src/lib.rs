@@ -453,6 +453,7 @@ const CONNECTION_WINDOW_FACTOR: f64 = 1.5;
 // validation as failed.
 const MAX_PROBING_TIMEOUTS: usize = 3;
 
+const DEFAULT_FEC_WINDOW_SIZE: usize = 500;
 /// A specialized [`Result`] type for quiche operations.
 ///
 /// This type is used throughout quiche's public API for any operation that
@@ -724,6 +725,7 @@ pub struct Config {
     fec_scheduler_algorithm: FECSchedulerAlgorithm,
     emit_fec: bool,
     receive_fec: bool,
+    fec_window_size: usize,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -786,6 +788,7 @@ impl Config {
             fec_scheduler_algorithm: FECSchedulerAlgorithm::NoRedundancy,
             emit_fec: false,
             receive_fec: false,
+            fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
         })
     }
 
@@ -1205,6 +1208,13 @@ impl Config {
         self.fec_scheduler_algorithm = alg;
     }
 
+    /// Sets the FEC decoding window size.
+    ///
+    /// The default value is `DEFAULT_FEC_WINDOW_SIZE`.
+    pub fn set_fec_window_size(&mut self, size: usize) {
+        self.fec_window_size = size;
+    }
+
     /// decides whether FEC should be sent to protect data
     /// In order for redundancy to be actually sent, it also needs
     /// a FEC scheduler algorithm different than FECSchedulerAlgorithm::NoRedundancy.
@@ -1411,6 +1421,7 @@ pub struct Connection {
     emit_fec: bool,
     receive_fec: bool,
     fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
+    fec_window_size: usize,
 
     /// Whether to emit DATAGRAM frames in the next packet.
     emit_dgram: bool,
@@ -1862,6 +1873,7 @@ impl Connection {
 
             emit_fec: config.emit_fec,
             receive_fec: config.receive_fec,
+            fec_window_size: config.fec_window_size,
         };
 
         // Don't support multipath with zero-length CIDs.
@@ -2748,9 +2760,6 @@ impl Connection {
                                         .remove_until(largest_acked)
                                 })
                                 .ok();
-                            if self.receive_fec {
-                                self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(largest_acked));
-                            }
                         }
                     },
 
@@ -7396,6 +7405,8 @@ impl Connection {
 
 
             frame::Frame::SourceSymbol { source_symbol } => {
+                self.fec_decoder.remove_up_to(
+                    source_symbol_metadata_from_u64(source_symbol_metadata_to_u64(source_symbol.metadata()) - self.fec_window_size as u64));
                 match self.fec_decoder.receive_source_symbol(source_symbol) {
                     Err(err) => return Err(Error::from(err)),
                     Ok(decoded_symbols) => {
