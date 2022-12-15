@@ -346,6 +346,7 @@
 #[macro_use]
 extern crate log;
 
+use fec::fec_scheduler::FECSchedulerAlgorithm;
 use networkcoding::EncoderError;
 use networkcoding::SourceSymbolMetadata;
 #[cfg(feature = "qlog")]
@@ -522,6 +523,9 @@ pub enum Error {
 
     /// Error in congestion control.
     CongestionControl,
+
+    /// Error in FEC Scheduler.
+    FECScheduler,
 
     /// Too many identifiers were provided.
     IdLimit,
@@ -718,6 +722,7 @@ pub struct Config {
 
     disable_dcid_reuse: bool,
 
+    fec_scheduler_algorithm: FECSchedulerAlgorithm,
     emit_fec: bool,
     receive_fec: bool,
 }
@@ -779,6 +784,7 @@ impl Config {
 
             disable_dcid_reuse: false,
 
+            fec_scheduler_algorithm: FECSchedulerAlgorithm::NoRedundancy,
             emit_fec: false,
             receive_fec: false,
         })
@@ -1192,7 +1198,17 @@ impl Config {
         self.disable_dcid_reuse = v;
     }
 
+    /// Sets the FEC redundancy scheduler algorithm used.
+    ///
+    /// The default value is `FECSchedulerAlgorithm::NoRedundancy`, meaning that
+    /// redundancy is never sent.
+    pub fn set_fec_scheduler_algorithm(&mut self, alg: FECSchedulerAlgorithm) {
+        self.fec_scheduler_algorithm = alg;
+    }
+
     /// decides whether FEC should be sent to protect data
+    /// In order for redundancy to be actually sent, it also needs
+    /// a FEC scheduler algorithm different than FECSchedulerAlgorithm::NoRedundancy.
     pub fn send_fec(&mut self, v: bool) {
         self.emit_fec = v;
     }
@@ -1392,7 +1408,7 @@ pub struct Connection {
     latest_metadata_of_symbol_with_fec_protected_frames: Option<SourceSymbolMetadata>,
     emit_fec: bool,
     receive_fec: bool,
-    fec_scheduler: fec::fec_scheduler::FECScheduler,
+    fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
 
     /// Whether to emit DATAGRAM frames in the next packet.
     emit_dgram: bool,
@@ -1838,7 +1854,7 @@ impl Connection {
             
             fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(1280, 5000)),
             fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(1280, 5000)),
-            fec_scheduler: fec::fec_scheduler::new_background_scheduler(),
+            fec_scheduler: Some(fec::fec_scheduler::new_fec_scheduler(config.fec_scheduler_algorithm)),
             latest_metadata_of_symbol_with_fec_protected_frames: None,
 
             emit_fec: config.emit_fec,
@@ -2836,7 +2852,9 @@ impl Connection {
                             .push_back((identifier_type, path_identifier));
                     },
                     frame::Frame::Repair { .. } => {
-                        self.fec_scheduler.acked_repair_symbol();
+                        if let Some(scheduler) = &mut self.fec_scheduler {
+                            scheduler.acked_repair_symbol();
+                        }
                     },
 
                     _ => (),
@@ -3363,7 +3381,9 @@ impl Connection {
                             .ok();
                     },
                     frame::Frame::Repair { .. } => {
-                        self.fec_scheduler.lost_repair_symbol();
+                        if let Some(scheduler) = &mut self.fec_scheduler {
+                            scheduler.lost_repair_symbol();
+                        }
                     },
 
                     _ => (),
@@ -4101,7 +4121,7 @@ impl Connection {
 
         // Create REPAIR frame.
         if self.emit_fec && pkt_type == packet::Type::Short
-            && self.fec_scheduler.should_send_repair(self, self.paths.get(send_pid)?, self.fec_encoder.symbol_size())
+            && self.should_send_repair_symbol(send_pid)?
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
                 match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
@@ -4111,7 +4131,7 @@ impl Connection {
                         };
                         if push_frame_to_pkt!(b, frames, frame, left) {
                             in_flight = true;
-                            self.fec_scheduler.sent_repair_symbol();
+                            self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
                             ack_eliciting = true;
                         } else {
                             return Err(BufferTooShort);
@@ -6605,6 +6625,13 @@ impl Connection {
         Ok(())
     }
 
+    fn should_send_repair_symbol(&mut self, pid: usize) -> Result<bool> {
+        let mut fec_scheduler = self.fec_scheduler.take().unwrap();
+        let should_send_repair = fec_scheduler.should_send_repair(self, self.paths.get(pid)?, self.fec_encoder.symbol_size());
+        self.fec_scheduler = Some(fec_scheduler);
+        Ok(should_send_repair)
+    }
+
     fn process_peer_transport_params(
         &mut self, peer_params: TransportParams,
     ) -> Result<()> {
@@ -6733,7 +6760,7 @@ impl Connection {
     }
 
     /// Selects the packet type for the next outgoing packet.
-    fn write_pkt_type(&self, send_pid: usize) -> Result<packet::Type> {
+    fn write_pkt_type(&mut self, send_pid: usize) -> Result<packet::Type> {
         // On error send packet in the latest epoch available, but only send
         // 1-RTT ones when the handshake is completed.
         if self
@@ -6806,7 +6833,7 @@ impl Connection {
                 self.paths.has_path_status() ||
                 send_path.needs_ack_eliciting ||
                 send_path.probing_required() ||
-                (self.emit_fec && self.fec_scheduler.should_send_repair(self,send_path, self.fec_encoder.symbol_size())))
+                (self.emit_fec && self.should_send_repair_symbol(send_pid)?))
         {
             // Only clients can send 0-RTT packets.
             if !self.is_server && self.is_in_early_data() {
