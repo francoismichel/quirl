@@ -1,10 +1,16 @@
 use crate::Connection;
 use crate::path::Path;
 
-pub struct BurstsFECScheduler {
+#[derive(Debug, Clone, Copy)]
+struct SendingState {
+    start_time: std::time::Instant,
+    max_sending_repair_bytes: usize,
+}
+pub(crate) struct BurstsFECScheduler {
     n_repair_in_flight: u64,
     n_packets_sent_when_nothing_to_send: usize,
-    state_sending_repair: Option<std::time::Instant>,
+    n_bytes_sent_when_nothing_to_send: usize,
+    state_sending_repair: Option<SendingState>,
 }
 
 impl BurstsFECScheduler {
@@ -12,6 +18,7 @@ impl BurstsFECScheduler {
         BurstsFECScheduler{
             n_repair_in_flight: 0,
             n_packets_sent_when_nothing_to_send: 0,
+            n_bytes_sent_when_nothing_to_send: 0,
             state_sending_repair: None,
         }
     }
@@ -22,29 +29,31 @@ impl BurstsFECScheduler {
         // send if no more data to send && we sent less repair than half the cwin
 
         let cwnd = path.recovery.cwnd();
-        let max_repair_data = if cwnd < 15000 {
-            cwnd*4/5
-        } else {
-            cwnd/2
-        };
         let nothing_to_send = !dgrams_to_emit && !stream_to_emit;
         let current_sent_count = conn.sent_count;
+        let current_sent_bytes = conn.sent_bytes as usize;
         let sent_enough_protected_data = current_sent_count - self.n_packets_sent_when_nothing_to_send > 5;
-        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} max_repair_data={}",
-                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, max_repair_data);
+        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?}",
+                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair);
         
         self.state_sending_repair = match self.state_sending_repair {
-            Some(instant) => {
-                if instant.elapsed() > path.recovery.rtt() {
+            Some(state) => {
+                if state.start_time.elapsed() > path.recovery.rtt() {
                     None
                 } else {
-                    Some(instant)
+                    Some(state)
                 }
             }
             None => {
                 if nothing_to_send && sent_enough_protected_data {
                     // a burst of packets has occurred, so send repair symbols
-                    Some(std::time::Instant::now())
+                    let bytes_to_protect = std::cmp::min(cwnd, current_sent_bytes - self.n_bytes_sent_when_nothing_to_send);
+                    let max_repair_data = if bytes_to_protect < 15000 {
+                        bytes_to_protect*3/5
+                    } else {
+                        bytes_to_protect/2
+                    };
+                    Some(SendingState{start_time: std::time::Instant::now(), max_sending_repair_bytes: max_repair_data})
                 } else {
                     None
                 }
@@ -53,8 +62,12 @@ impl BurstsFECScheduler {
 
         if nothing_to_send {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
+            self.n_bytes_sent_when_nothing_to_send = conn.sent_bytes as usize;
         }
-        self.state_sending_repair.is_some() && (self.n_repair_in_flight as usize *symbol_size) < max_repair_data
+        match self.state_sending_repair {
+            Some(state) => (self.n_repair_in_flight as usize * symbol_size) < state.max_sending_repair_bytes,
+            None => false,
+        }
     }
 
     pub fn sent_repair_symbol(&mut self) {
