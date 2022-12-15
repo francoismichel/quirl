@@ -346,7 +346,6 @@
 #[macro_use]
 extern crate log;
 
-use fec::fec_scheduler::FECSchedulerAlgorithm;
 use networkcoding::EncoderError;
 use networkcoding::SourceSymbolMetadata;
 #[cfg(feature = "qlog")]
@@ -16277,6 +16276,7 @@ pub use crate::path::PathStatus;
 pub use crate::path::SocketAddrIter;
 
 pub use crate::recovery::CongestionControlAlgorithm;
+pub use crate::fec::fec_scheduler::FECSchedulerAlgorithm;
 
 pub use crate::stream::StreamIter;
 use crate::Error::{BufferTooShort, SourceSymbolCreationError};
