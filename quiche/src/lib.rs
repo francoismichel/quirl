@@ -1272,7 +1272,10 @@ pub struct Connection {
     recov_count: usize,
 
     /// Total number of repair symbols received
-    repair_symbols_count: usize,
+    repair_symbols_received_count: usize,
+
+    /// Total number of repair symbols received
+    repair_symbols_sent_count: usize,
 
     /// Total number of bytes received from the peer.
     rx_data: u64,
@@ -1757,7 +1760,8 @@ impl Connection {
             lost_count: 0,
             retrans_count: 0,
             recov_count: 0,
-            repair_symbols_count: 0,
+            repair_symbols_received_count: 0,
+            repair_symbols_sent_count: 0,
             sent_bytes: 0,
             recv_bytes: 0,
             lost_bytes: 0,
@@ -4132,6 +4136,7 @@ impl Connection {
                             in_flight = true;
                             self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
                             ack_eliciting = true;
+                            self.repair_symbols_sent_count += 1;
                         } else {
                             return Err(BufferTooShort);
                         }
@@ -6497,7 +6502,8 @@ impl Connection {
             lost: self.lost_count,
             retrans: self.retrans_count,
             recov: self.recov_count,
-            repair: self.repair_symbols_count,
+            repair_received: self.repair_symbols_received_count,
+            repair_sent: self.repair_symbols_sent_count,
             sent_bytes: self.sent_bytes,
             recv_bytes: self.recv_bytes,
             lost_bytes: self.lost_bytes,
@@ -7374,7 +7380,7 @@ impl Connection {
             },
 
             frame::Frame::Repair { repair_symbol } => {
-                self.repair_symbols_count += 1;
+                self.repair_symbols_received_count += 1;
                 match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
                     Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
                     Err(err) => return Err(Error::from(err)),
@@ -8071,8 +8077,11 @@ pub struct Stats {
     /// The number of source symbols recovered using FEC
     pub recov: usize,
 
+    /// The number of repair symbols sent
+    pub repair_sent: usize,
+
     /// The number of repair symbols received
-    pub repair: usize,
+    pub repair_received: usize,
 
     /// The number of sent bytes.
     pub sent_bytes: u64,
