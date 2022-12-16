@@ -3124,6 +3124,12 @@ impl Connection {
                         }
                     },
 
+                    frame::Frame::SourceSymbolHeader { metadata } => {
+                        if self.emit_fec {
+                            self.fec_encoder.remove_up_to(metadata);
+                        }
+                    }
+
                     _ => (),
                 }
             }
@@ -7351,11 +7357,6 @@ impl Connection {
                     self.drop_epoch_state(packet::Epoch::Handshake, now);
                 }
 
-                if self.emit_fec {
-                    if let Some(largest_acked) = ranges.last() {
-                        self.fec_encoder.remove_up_to(source_symbol_metadata_from_u64(largest_acked));
-                    }
-                }
             },
 
             frame::Frame::ResetStream {
