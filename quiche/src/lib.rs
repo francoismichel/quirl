@@ -382,6 +382,7 @@
 #[macro_use]
 extern crate log;
 
+use networkcoding::DecoderError;
 use networkcoding::EncoderError;
 use networkcoding::SourceSymbolMetadata;
 #[cfg(feature = "qlog")]
@@ -7801,6 +7802,9 @@ impl Connection {
                 }
                 
                 match self.fec_decoder.receive_source_symbol(source_symbol) {
+                    Err(DecoderError::UnusedSourceSymbol) => {
+                        info!("received a source symbol unused by the decoder");
+                    },
                     Err(err) => return Err(Error::from(err)),
                     Ok(decoded_symbols) => {
                         for decoded_symbol in decoded_symbols {
