@@ -1,5 +1,6 @@
 use crate::Connection;
 use crate::path::Path;
+use std::env;
 
 #[derive(Debug, Clone, Copy)]
 struct SendingState {
@@ -24,6 +25,9 @@ impl BurstsFECScheduler {
     }
 
     pub fn should_send_repair(&mut self, conn: &Connection, path: &Path, symbol_size: usize) -> bool {
+        // this variable can be overriden by the DEBUG_QUICHE_FEC_BURST_SIZE_BYTES environment variable for debug purposes
+        const DEFAULT_BURST_SIZE: usize = 15000;
+        let burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
         let dgrams_to_emit = conn.dgram_max_writable_len().is_some();
         let stream_to_emit = conn.streams.has_flushable();
         // send if no more data to send && we sent less repair than half the cwin
@@ -32,7 +36,7 @@ impl BurstsFECScheduler {
         let nothing_to_send = !dgrams_to_emit && !stream_to_emit;
         let current_sent_count = conn.sent_count;
         let current_sent_bytes = conn.sent_bytes as usize;
-        let sent_enough_protected_data = current_sent_count - self.n_packets_sent_when_nothing_to_send > 5;
+        let sent_enough_protected_data = current_sent_bytes - self.n_bytes_sent_when_nothing_to_send > burst_size;
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}",
                 dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send);
         
