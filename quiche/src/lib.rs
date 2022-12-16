@@ -7405,8 +7405,11 @@ impl Connection {
 
 
             frame::Frame::SourceSymbol { source_symbol } => {
-                self.fec_decoder.remove_up_to(
-                    source_symbol_metadata_from_u64(source_symbol_metadata_to_u64(source_symbol.metadata()) - self.fec_window_size as u64));
+                let id = source_symbol_metadata_to_u64(source_symbol.metadata());
+                if self.fec_window_size as u64 <= id {
+                    self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_window_size as u64));
+                }
+                
                 match self.fec_decoder.receive_source_symbol(source_symbol) {
                     Err(err) => return Err(Error::from(err)),
                     Ok(decoded_symbols) => {
