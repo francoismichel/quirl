@@ -90,6 +90,15 @@ impl FECScheduler {
         }
     }
 
+
+    pub fn sent_source_symbol(&mut self) {
+        match self {
+            BackgroundOnly(scheduler) => scheduler.sent_source_symbol(),
+            Bursty(scheduler) => scheduler.sent_source_symbol(),
+            NoRedundancy => (),
+        }
+    }
+
     pub fn lost_repair_symbol(&mut self) {
         match self {
             BackgroundOnly(scheduler) => scheduler.lost_repair_symbol(),
