@@ -34,6 +34,11 @@ impl BackgroundFECScheduler {
 
     pub fn acked_repair_symbol(&mut self) {
         self.n_repair_in_flight -= 1;
+
+    }
+    
+    pub fn sent_source_symbol(&mut self) {
+
     }
 
     pub fn lost_repair_symbol(&mut self) {

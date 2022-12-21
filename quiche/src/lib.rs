@@ -4457,6 +4457,9 @@ impl Connection {
                 if push_frame_to_pkt!(b, frames, frame, left) {
                     in_flight = true;
                     fec_protected = true;
+                    if let Some(fec_scheduler) = &mut self.fec_scheduler {
+                        fec_scheduler.sent_source_symbol();
+                    }
                 } else {
                     error!("buffer too short when adding ID frame");
                     return Err(BufferTooShort);
