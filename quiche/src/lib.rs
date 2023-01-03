@@ -3416,6 +3416,16 @@ impl Connection {
         left =
             cmp::min(left, self.paths.get(send_pid)?.recovery.cwnd_available());
 
+        let space_reduction_due_to_cwnd = b.cap() - left;
+
+        let pn = self.pkt_num_spaces[epoch].next_pkt_num;
+        let pn_len = packet::pkt_num_len(pn)?;
+
+        // The AEAD overhead at the current encryption level.
+        let crypto_overhead = self.pkt_num_spaces[epoch]
+            .crypto_overhead()
+            .ok_or(Error::Done)?;
+
         let dcid_seq = self
             .paths
             .get(send_pid)?
@@ -4135,7 +4145,7 @@ impl Connection {
 
 
         if should_protect_packet {
-            left -= std::cmp::min(32, left)
+            left -= std::cmp::min(32usize.saturating_sub(space_reduction_due_to_cwnd), left);
         }
 
         // Create REPAIR frame.
