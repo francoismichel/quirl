@@ -838,6 +838,7 @@ impl Frame {
             },
 
             Frame::Repair { repair_symbol } => {
+                1 + // frame_type
                 repair_symbol.wire_len()
             },
 
