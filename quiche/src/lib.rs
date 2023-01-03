@@ -3971,12 +3971,16 @@ impl Connection {
 
         let path = self.paths.get_mut(send_pid)?;
 
+        let left_before_reduction_by_cwnd = left;
         // Limit output packet size by congestion window size.
         left = cmp::min(
             left,
             // Bytes consumed by ACK frames.
             cwnd_available.saturating_sub(left_before_packing_ack_frame - left),
         );
+
+
+        let space_reduction_due_to_cwnd = left_before_reduction_by_cwnd - left;
 
         let mut challenge_data = None;
 
@@ -4415,7 +4419,7 @@ impl Connection {
 
 
         if should_protect_packet {
-            left -= std::cmp::min(32, left)
+            left -= std::cmp::min(32usize.saturating_sub(space_reduction_due_to_cwnd), left);
         }
 
         
