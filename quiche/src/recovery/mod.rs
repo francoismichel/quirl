@@ -41,6 +41,7 @@ use crate::minmax;
 use crate::packet;
 use crate::ranges;
 
+use networkcoding::source_symbol_metadata_to_u64;
 #[cfg(feature = "qlog")]
 use qlog::events::EventData;
 
@@ -434,6 +435,42 @@ impl Recovery {
         self.pacer.send(sent_bytes, now);
     }
 
+    /// here, the ranges concern source symbol metadata, not packet numbers
+    pub fn on_source_symbol_ack_received(
+        &mut self, ranges: &ranges::RangeSet,
+        epoch: packet::Epoch, now: Instant,
+        trace_id: &str,
+    ) {
+        // Detect and mark recovered source symbols, without considering them acked or anything
+        for r in ranges.iter() {
+            let lowest_recovered_in_block = r.start;
+            let largest_recovered_in_block = r.end - 1;
+
+            // search in the unacked packets, the one containing source symbols that have been recovered here
+            let unacked_iter = self.sent[epoch]
+                .iter_mut()
+                // Skip packets that have already been acked or lost.
+                .filter(|p| p.time_acked.is_none());
+
+            for unacked in unacked_iter {
+                unacked.time_acked = Some(now);
+                for frame in &mut unacked.frames {
+                    if let frame::Frame::SourceSymbolHeader{
+                                                metadata,
+                                                recovered,
+                                            } = frame {
+                        let mdu64 = source_symbol_metadata_to_u64(metadata.clone());
+                        if lowest_recovered_in_block <= mdu64 && mdu64 <= largest_recovered_in_block {
+                            *recovered = true;
+                            trace!("{} source symbol newly recovered {} in pkt {}", trace_id, mdu64, unacked.pkt_num);
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn on_ack_received(
         &mut self, ranges: &ranges::RangeSet, ack_delay: u64,
@@ -665,7 +702,21 @@ impl Recovery {
         // HANDSHAKE_DONE and MAX_DATA / MAX_STREAM_DATA as well, in addition
         // to CRYPTO and STREAM, if the original packet carried them.
         for unacked in unacked_iter {
-            self.lost[epoch].extend_from_slice(&unacked.frames);
+            let mut contains_recovered_source_symbol = false;
+            for frame in &unacked.frames {
+                match frame {
+                    frame::Frame::SourceSymbolHeader { recovered, .. } => {
+                        if *recovered {
+                            contains_recovered_source_symbol = true;
+                        }
+                    }
+                    _ => {
+                        if contains_recovered_source_symbol {
+                            self.lost[epoch].push(frame.clone())
+                        }
+                    }
+                }
+            }
         }
 
         self.set_loss_detection_timer(handshake_status, now);
