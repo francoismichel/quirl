@@ -207,11 +207,16 @@ pub enum Frame {
 
     SourceSymbolHeader {
         metadata: SourceSymbolMetadata,
+        recovered: bool,
     },
 
     SourceSymbol {
         source_symbol: SourceSymbol,
-    }
+    },
+
+    SourceSymbolACK {
+        ranges: ranges::RangeSet,
+    },
 }
 
 impl Frame {
@@ -395,6 +400,7 @@ impl Frame {
                     source_symbol: SourceSymbol::new(source_symbol_metadata, source_symbol_data),
                 }
             },
+            0x34 => parse_source_symbol_ack_frame(b)?,
 
             _ => return Err(Error::InvalidFrame),
         };
@@ -687,7 +693,7 @@ impl Frame {
                 b.put_varint(0x32)?;
                 b.put_bytes(repair_symbol.get())?;
             }
-            Frame::SourceSymbolHeader { metadata } => {
+            Frame::SourceSymbolHeader { metadata, .. } => {
                 // the source symbol frame only writes its metadata and we expect next protected frames to be written afterwards
                 // This is weird, the best would be to wrap the protected frames inside the source symbol frame
                 // but we would loose some view on what the packet contains and it would require many changes to recover that
@@ -701,6 +707,30 @@ impl Frame {
                 b.put_varint(0x33)?;
                 b.put_bytes(&source_symbol.metadata())?;
                 b.put_bytes(source_symbol.get())?;
+            }
+            Frame::SourceSymbolACK { ranges } => {
+                // the same as an ACK frame but acknowledging source symbols
+                b.put_varint(0x34)?;
+                let mut it = ranges.iter().rev();
+
+                let first = it.next().unwrap();
+                let ack_block = (first.end - 1) - first.start;
+
+                b.put_varint(first.end - 1)?;
+                b.put_varint(it.len() as u64)?;
+                b.put_varint(ack_block)?;
+
+                let mut smallest_ack = first.start;
+
+                for block in it {
+                    let gap = smallest_ack - block.end - 1;
+                    let ack_block = (block.end - 1) - block.start;
+
+                    b.put_varint(gap)?;
+                    b.put_varint(ack_block)?;
+
+                    smallest_ack = block.start;
+                }
             }
         }
 
@@ -936,7 +966,7 @@ impl Frame {
                 repair_symbol.wire_len()
             },
 
-            Frame::SourceSymbolHeader { metadata } => {
+            Frame::SourceSymbolHeader { metadata, .. } => {
                 1 + // frame type
                 metadata.len() // metadata
             },
@@ -945,6 +975,32 @@ impl Frame {
                 1 + // frame type
                 source_symbol.metadata().len() + // metadata
                 source_symbol.get().len()
+            },
+            Frame::SourceSymbolACK {
+                ranges,
+            } => {
+                let mut it = ranges.iter().rev();
+
+                let first = it.next().unwrap();
+                let ack_block = (first.end - 1) - first.start;
+
+                let mut len = 1 + // frame type
+                    octets::varint_len(first.end - 1) + // largest_ack
+                    octets::varint_len(it.len() as u64) + // block_count
+                    octets::varint_len(ack_block); // first_block
+
+                let mut smallest_ack = first.start;
+
+                for block in it {
+                    let gap = smallest_ack - block.end - 1;
+                    let ack_block = (block.end - 1) - block.start;
+
+                    len += octets::varint_len(gap) + // gap
+                           octets::varint_len(ack_block); // ack_block
+
+                    smallest_ack = block.start;
+                }
+                len
             },
         }
     }
@@ -959,7 +1015,8 @@ impl Frame {
                 Frame::ConnectionClose { .. } |
                 Frame::ACKMP { .. } |
                 Frame::SourceSymbol { .. } |
-                Frame::SourceSymbolHeader { .. }
+                Frame::SourceSymbolHeader { .. } |
+                Frame::SourceSymbolACK { .. }
         )
     }
 
@@ -1218,7 +1275,7 @@ impl Frame {
                 raw: None,
             },
 
-            Frame::SourceSymbolHeader { metadata } => QuicFrame::Unknown {
+            Frame::SourceSymbolHeader { metadata, .. } => QuicFrame::Unknown {
                 raw_frame_type: 0x33,
                 raw_length: Some(metadata.len() as u32),
                 raw: None,
@@ -1228,6 +1285,15 @@ impl Frame {
                 raw_frame_type: 0x33,
                 raw_length: Some(source_symbol.metadata().len() as u32),
                 raw: None,
+            },
+            Frame::SourceSymbolACK {
+                ..
+            } => {
+                QuicFrame::Unknown {
+                    raw_frame_type: 0x34,
+                    raw_length: Some(self.wire_len() as u32),
+                    raw: None,
+                }
             },
         }
     }
@@ -1450,12 +1516,20 @@ impl std::fmt::Debug for Frame {
                 write!(f, "REPAIR len={}", repair_symbol.wire_len())?;
             },
 
-            Frame::SourceSymbolHeader { metadata } => {
+            Frame::SourceSymbolHeader { metadata, .. } => {
                 write!(f, "SOURCE_SYMBOL, metadata={} len={}", source_symbol_metadata_to_u64(*metadata), metadata.len())?;
             },
 
             Frame::SourceSymbol { source_symbol } => {
                 write!(f, "SOURCE_SYMBOL, metadata={} len={}", source_symbol_metadata_to_u64(source_symbol.metadata()), source_symbol.metadata().len())?;
+            },
+            Frame::SourceSymbolACK {
+                ranges,
+            } => {
+                write!(
+                    f,
+                    "SOURCE_SYMBOL_ACK blocks={:?}", ranges
+                )?;
             },
         }
 
@@ -1607,6 +1681,45 @@ fn common_ack_wire_len(
     }
 
     len
+}
+
+fn parse_source_symbol_ack_frame(b: &mut octets::Octets) -> Result<Frame> {
+    let largest_ack = b.get_varint()?;
+    let block_count = b.get_varint()?;
+    let ack_block = b.get_varint()?;
+
+    if largest_ack < ack_block {
+        return Err(Error::InvalidFrame);
+    }
+
+    let mut smallest_ack = largest_ack - ack_block;
+
+    let mut ranges = ranges::RangeSet::default();
+
+    ranges.insert(smallest_ack..largest_ack + 1);
+
+    for _i in 0..block_count {
+        let gap = b.get_varint()?;
+
+        if smallest_ack < 2 + gap {
+            return Err(Error::InvalidFrame);
+        }
+
+        let largest_ack = (smallest_ack - gap) - 2;
+        let ack_block = b.get_varint()?;
+
+        if largest_ack < ack_block {
+            return Err(Error::InvalidFrame);
+        }
+
+        smallest_ack = largest_ack - ack_block;
+
+        ranges.insert(smallest_ack..largest_ack + 1);
+    }
+
+    Ok(Frame::SourceSymbolACK {
+        ranges,
+    })
 }
 
 pub fn encode_crypto_header(
