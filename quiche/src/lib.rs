@@ -1505,6 +1505,8 @@ pub struct Connection {
     receive_fec: bool,
     fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
     fec_window_size: usize,
+    recovered_symbols_need_ack: ranges::RangeSet,
+
 
     /// Whether to emit DATAGRAM frames in the next packet.
     emit_dgram: bool,
@@ -1961,6 +1963,7 @@ impl Connection {
             emit_fec: config.emit_fec,
             receive_fec: config.receive_fec,
             fec_window_size: config.fec_window_size,
+            recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
         };
 
         // Don't support multipath with zero-length CIDs.
@@ -3125,7 +3128,7 @@ impl Connection {
                         }
                     },
 
-                    frame::Frame::SourceSymbolHeader { metadata } => {
+                    frame::Frame::SourceSymbolHeader { metadata, .. } => {
                         if self.emit_fec {
                             self.fec_encoder.remove_up_to(metadata);
                         }
@@ -3679,7 +3682,6 @@ impl Connection {
         let mut left = b.cap();
 
         let path = self.paths.get_mut(send_pid)?;
-
         let dcid_seq = path.active_dcid_seq.ok_or(Error::OutOfIdentifiers)?;
         let space_id = if multiple_application_data_pkt_num_spaces {
             dcid_seq
@@ -4006,6 +4008,18 @@ impl Connection {
         }
 
         if pkt_type == packet::Type::Short && !is_closing {
+
+            // create SOURCE_SYMBOL_ACK frame
+            if self.recovered_symbols_need_ack.len() > 0 {
+                let frame = frame::Frame::SourceSymbolACK {
+                    ranges: self.recovered_symbols_need_ack.clone(),
+                };
+    
+                if push_frame_to_pkt!(b, frames, frame, left) {
+                    self.recovered_symbols_need_ack = ranges::RangeSet::new(crate::MAX_ACK_RANGES);
+                }
+            }
+
             // Create NEW_CONNECTION_ID frames as needed.
             while let Some(seq_num) = self.ids.next_advertise_new_scid_seq() {
                 let frame = self.ids.get_new_connection_id_frame_for(seq_num)?;
@@ -4395,7 +4409,7 @@ impl Connection {
         }
 
 
-        let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?}.wire_len();
+        let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?, recovered: false}.wire_len();
         let should_protect_packet = self.emit_fec 
                                     && !is_closing 
                                     && self.paths.get(send_pid)?.active() 
@@ -4437,7 +4451,7 @@ impl Connection {
 
         if should_protect_packet {
             left = std::cmp::min(left, self.fec_encoder.symbol_size().saturating_sub(b.off() - payload_offset));
-            let frame = frame::Frame::SourceSymbolHeader { metadata: self.fec_encoder.next_metadata()? };
+            let frame = frame::Frame::SourceSymbolHeader { metadata: self.fec_encoder.next_metadata()?, recovered: false };
             if frame.wire_len() < left {
                 if push_frame_to_pkt!(b, frames, frame, left) {
                     in_flight = true;
@@ -7792,8 +7806,10 @@ impl Connection {
                     Ok((_, decoded_symbols)) => {
                         for decoded_symbol in decoded_symbols {
                             self.recov_count += 1;
-                            trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
+                            let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                            trace!("process decoded symbol {}", mdu64);
                             self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                            self.recovered_symbols_need_ack.push_item(mdu64);
                         }
                     }
                 }
@@ -7814,12 +7830,25 @@ impl Connection {
                     Ok(decoded_symbols) => {
                         for decoded_symbol in decoded_symbols {
                             self.recov_count += 1;
-                            trace!("process decoded symbol {}", source_symbol_metadata_to_u64(decoded_symbol.metadata()));
+                            let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                            trace!("process decoded symbol {}", mdu64);
                             self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                            self.recovered_symbols_need_ack.push_item(mdu64);
                         }
                     }
                 }
             },
+
+            frame::Frame::SourceSymbolACK { ranges } => {
+                for (_, p) in self.paths.iter_mut() {
+                    p.recovery.on_source_symbol_ack_received(
+                        &ranges,
+                        epoch,
+                        now,
+                        &self.trace_id,
+                    );
+                }
+            }
 
             frame::Frame::SourceSymbolHeader { .. } => unreachable!(),
             frame::Frame::DatagramHeader { .. } => unreachable!(),
