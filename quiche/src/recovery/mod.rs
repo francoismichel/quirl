@@ -37,6 +37,7 @@ use crate::Config;
 use crate::Result;
 
 use crate::frame;
+use crate::frame::Frame;
 use crate::minmax;
 use crate::packet;
 use crate::ranges;
@@ -89,6 +90,10 @@ impl SpacedPktNum {
         Self(space_id, pkt_num)
     }
 }
+pub enum LostFrame {
+    Lost(Frame),
+    LostAndRecovered(Frame),
+}
 
 pub struct Recovery {
     loss_detection_timer: Option<Instant>,
@@ -118,7 +123,7 @@ pub struct Recovery {
 
     sent: [VecDeque<Sent>; packet::Epoch::count()],
 
-    pub lost: [Vec<frame::Frame>; packet::Epoch::count()],
+    pub lost: [Vec<LostFrame>; packet::Epoch::count()],
 
     pub acked: [Vec<frame::Frame>; packet::Epoch::count()],
 
@@ -705,17 +710,16 @@ impl Recovery {
         for unacked in unacked_iter {
             let mut contains_recovered_source_symbol = false;
             for frame in &unacked.frames {
-                match frame {
-                    frame::Frame::SourceSymbolHeader { recovered, .. } => {
-                        if *recovered {
-                            contains_recovered_source_symbol = true;
-                        }
+                if let frame::Frame::SourceSymbolHeader { recovered, .. } = frame {
+                    if *recovered {
+                        contains_recovered_source_symbol = true;
                     }
-                    _ => {
-                        if contains_recovered_source_symbol {
-                            self.lost[epoch].push(frame.clone())
-                        }
-                    }
+                }
+
+                if contains_recovered_source_symbol {
+                    self.lost[epoch].push(LostFrame::LostAndRecovered(frame.clone()))
+                } else {
+                    self.lost[epoch].push(LostFrame::Lost(frame.clone()))
                 }
             }
         }
@@ -965,7 +969,21 @@ impl Recovery {
             let mut largest_lost_pkt = None;
             for sent in self.sent[e].drain(..) {
                 if sent.time_acked.is_none() {
-                    self.lost[e].extend_from_slice(&sent.frames);
+
+                    let mut contains_recovered_source_symbol = false;
+                    for frame in &sent.frames {
+                        if let frame::Frame::SourceSymbolHeader { recovered, .. } = frame {
+                            if *recovered {
+                                contains_recovered_source_symbol = true;
+                            }
+                        }
+
+                        if contains_recovered_source_symbol {
+                            self.lost[e].push(LostFrame::LostAndRecovered(frame.clone()))
+                        } else {
+                            self.lost[e].push(LostFrame::Lost(frame.clone()))
+                        }
+                    }
                     if sent.in_flight {
                         epoch_lost_bytes += sent.size;
 
@@ -1032,8 +1050,20 @@ impl Recovery {
             if unacked.time_sent <= lost_send_time ||
                 largest_acked.1 >= unacked.pkt_num.1 + self.pkt_thresh
             {
-                self.lost[epoch].extend(unacked.frames.drain(..));
+                let mut contains_recovered_source_symbol = false;
+                for frame in &unacked.frames {
+                    if let frame::Frame::SourceSymbolHeader { recovered, .. } = frame {
+                        if *recovered {
+                            contains_recovered_source_symbol = true;
+                        }
+                    }
 
+                    if contains_recovered_source_symbol {
+                        self.lost[epoch].push(LostFrame::LostAndRecovered(frame.clone()))
+                    } else {
+                        self.lost[epoch].push(LostFrame::Lost(frame.clone()))
+                    }
+                }
                 unacked.time_lost = Some(now);
 
                 if unacked.in_flight {
