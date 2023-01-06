@@ -446,7 +446,7 @@ impl Recovery {
     /// here, the ranges concern source symbol metadata, not packet numbers
     pub fn on_source_symbol_ack_received(
         &mut self, ranges: &ranges::RangeSet,
-        epoch: packet::Epoch, now: Instant,
+        epoch: packet::Epoch,
         trace_id: &str,
     ) {
         // Detect and mark recovered source symbols, without considering them acked or anything
@@ -461,7 +461,6 @@ impl Recovery {
                 .filter(|p| p.time_acked.is_none());
 
             for unacked in unacked_iter {
-                unacked.time_acked = Some(now);
                 for frame in &mut unacked.frames {
                     if let frame::Frame::SourceSymbolHeader{
                                                 metadata,
