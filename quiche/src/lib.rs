@@ -3290,127 +3290,139 @@ impl Connection {
             self.use_path_pkt_num_space(epoch);
         // Process lost frames. There might be several paths having lost frames.
         for (_, p) in self.paths.iter_mut() {
-            for lost in p.recovery.lost[epoch].drain(..) {
-                match lost {
-                    frame::Frame::CryptoHeader { offset, length } => {
-                        self.pkt_num_spaces
-                            .crypto_mut(epoch)
-                            .crypto_stream
-                            .send
-                            .retransmit(offset, length);
+            for lost_frame in p.recovery.lost[epoch].drain(..) {
+                match lost_frame {
+                    recovery::LostFrame::Lost(frame) => {
+                        match frame {
+                            frame::Frame::CryptoHeader { offset, length } => {
+                                self.pkt_num_spaces
+                                    .crypto_mut(epoch)
+                                    .crypto_stream
+                                    .send
+                                    .retransmit(offset, length);
 
-                        self.stream_retrans_bytes += length as u64;
-                        p.stream_retrans_bytes += length as u64;
+                                self.stream_retrans_bytes += length as u64;
+                                p.stream_retrans_bytes += length as u64;
 
-                        self.retrans_count += 1;
-                        p.retrans_count += 1;
-                    },
+                                self.retrans_count += 1;
+                                p.retrans_count += 1;
+                            },
 
-                    frame::Frame::StreamHeader {
-                        stream_id,
-                        offset,
-                        length,
-                        fin,
-                    } => {
-                        let stream = match self.streams.get_mut(stream_id) {
-                            Some(v) => v,
-
-                            None => continue,
-                        };
-
-                        let was_flushable = stream.is_flushable();
-
-                        let empty_fin = length == 0 && fin;
-
-                        stream.send.retransmit(offset, length);
-
-                        // If the stream is now flushable push it to the
-                        // flushable queue, but only if it wasn't already
-                        // queued.
-                        //
-                        // Consider the stream flushable also when we are
-                        // sending a zero-length frame that has the fin flag
-                        // set.
-                        if (stream.is_flushable() || empty_fin) && !was_flushable
-                        {
-                            let urgency = stream.urgency;
-                            let incremental = stream.incremental;
-                            self.streams.push_flushable(
+                            frame::Frame::StreamHeader {
                                 stream_id,
-                                urgency,
-                                incremental,
-                            );
+                                offset,
+                                length,
+                                fin,
+                            } => {
+                                let stream = match self.streams.get_mut(stream_id) {
+                                    Some(v) => v,
+        
+                                    None => continue,
+                                };
+        
+                                let was_flushable = stream.is_flushable();
+        
+                                let empty_fin = length == 0 && fin;
+        
+                                stream.send.retransmit(offset, length);
+        
+                                // If the stream is now flushable push it to the
+                                // flushable queue, but only if it wasn't already
+                                // queued.
+                                //
+                                // Consider the stream flushable also when we are
+                                // sending a zero-length frame that has the fin flag
+                                // set.
+                                if (stream.is_flushable() || empty_fin) && !was_flushable
+                                {
+                                    let urgency = stream.urgency;
+                                    let incremental = stream.incremental;
+                                    self.streams.push_flushable(
+                                        stream_id,
+                                        urgency,
+                                        incremental,
+                                    );
+                                }
+        
+                                self.stream_retrans_bytes += length as u64;
+                                p.stream_retrans_bytes += length as u64;
+        
+                                self.retrans_count += 1;
+                                p.retrans_count += 1;
+                            },
+        
+                            frame::Frame::ACK { .. } => {
+                                self.pkt_num_spaces
+                                    .get_mut(epoch, 0)
+                                    .map(|pns| {
+                                        pns.ack_elicited = true;
+                                    })
+                                    .ok();
+                            },
+        
+                            frame::Frame::ResetStream {
+                                stream_id,
+                                error_code,
+                                final_size,
+                            } =>
+                                if self.streams.get(stream_id).is_some() {
+                                    self.streams.mark_reset(
+                                        stream_id, true, error_code, final_size,
+                                    );
+                                },
+        
+                            // Retransmit HANDSHAKE_DONE only if it hasn't been acked at
+                            // least once already.
+                            frame::Frame::HandshakeDone if !self.handshake_done_acked => {
+                                self.handshake_done_sent = false;
+                            },
+        
+                            frame::Frame::MaxStreamData { stream_id, .. } => {
+                                if self.streams.get(stream_id).is_some() {
+                                    self.streams.mark_almost_full(stream_id, true);
+                                }
+                            },
+        
+                            frame::Frame::MaxData { .. } => {
+                                self.almost_full = true;
+                            },
+        
+                            frame::Frame::NewConnectionId { seq_num, .. } => {
+                                self.ids.mark_advertise_new_scid_seq(seq_num, true);
+                            },
+        
+                            frame::Frame::RetireConnectionId { seq_num } => {
+                                self.ids.mark_retire_dcid_seq(seq_num, true);
+                            },
+        
+                            frame::Frame::ACKMP {
+                                space_identifier, ..
+                            } => {
+                                self.pkt_num_spaces
+                                    .get_mut(epoch, space_identifier)
+                                    .map(|pns| {
+                                        pns.ack_elicited = true;
+                                    })
+                                    .ok();
+                            },
+                            frame::Frame::Repair { .. } => {
+                                if let Some(scheduler) = &mut self.fec_scheduler {
+                                    scheduler.lost_repair_symbol();
+                                }
+                            },
+        
+                            _ => (),
                         }
-
-                        self.stream_retrans_bytes += length as u64;
-                        p.stream_retrans_bytes += length as u64;
-
-                        self.retrans_count += 1;
-                        p.retrans_count += 1;
-                    },
-
-                    frame::Frame::ACK { .. } => {
-                        self.pkt_num_spaces
-                            .get_mut(epoch, 0)
-                            .map(|pns| {
-                                pns.ack_elicited = true;
-                            })
-                            .ok();
-                    },
-
-                    frame::Frame::ResetStream {
-                        stream_id,
-                        error_code,
-                        final_size,
-                    } =>
-                        if self.streams.get(stream_id).is_some() {
-                            self.streams.mark_reset(
-                                stream_id, true, error_code, final_size,
-                            );
-                        },
-
-                    // Retransmit HANDSHAKE_DONE only if it hasn't been acked at
-                    // least once already.
-                    frame::Frame::HandshakeDone if !self.handshake_done_acked => {
-                        self.handshake_done_sent = false;
-                    },
-
-                    frame::Frame::MaxStreamData { stream_id, .. } => {
-                        if self.streams.get(stream_id).is_some() {
-                            self.streams.mark_almost_full(stream_id, true);
+                    }
+                    recovery::LostFrame::LostAndRecovered(frame) => {
+                        if let frame::Frame::Repair { .. } = frame {
+                            if let Some(scheduler) = &mut self.fec_scheduler {
+                                scheduler.lost_repair_symbol();
+                            }
                         }
-                    },
-
-                    frame::Frame::MaxData { .. } => {
-                        self.almost_full = true;
-                    },
-
-                    frame::Frame::NewConnectionId { seq_num, .. } => {
-                        self.ids.mark_advertise_new_scid_seq(seq_num, true);
-                    },
-
-                    frame::Frame::RetireConnectionId { seq_num } => {
-                        self.ids.mark_retire_dcid_seq(seq_num, true);
-                    },
-
-                    frame::Frame::ACKMP {
-                        space_identifier, ..
-                    } => {
-                        self.pkt_num_spaces
-                            .get_mut(epoch, space_identifier)
-                            .map(|pns| {
-                                pns.ack_elicited = true;
-                            })
-                            .ok();
-                    },
-                    frame::Frame::Repair { .. } => {
-                        if let Some(scheduler) = &mut self.fec_scheduler {
-                            scheduler.lost_repair_symbol();
-                        }
-                    },
-
-                    _ => (),
+                    }
                 }
+                
             }
         }
 
