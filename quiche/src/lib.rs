@@ -7902,7 +7902,6 @@ impl Connection {
                     p.recovery.on_source_symbol_ack_received(
                         &ranges,
                         epoch,
-                        now,
                         &self.trace_id,
                     );
                 }
