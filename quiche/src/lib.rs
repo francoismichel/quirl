@@ -4433,8 +4433,10 @@ impl Connection {
             left -= std::cmp::min(32usize.saturating_sub(space_reduction_due_to_cwnd), left);
         }
 
+        let can_send_fec = self.emit_fec && (self.paths.get(send_pid)?.fec_only || self.paths.iter().all(|(_, p)| !p.fec_only));
+
         // Create REPAIR frame.
-        if self.emit_fec && pkt_type == packet::Type::Short
+        if can_send_fec && pkt_type == packet::Type::Short
             && self.should_send_repair_symbol(send_pid)?
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
@@ -4946,6 +4948,15 @@ impl Connection {
         }
 
         Ok((pkt_type, written))
+    }
+
+    /// Considers this path as a FEC-only path: no user data (streams or datagrams) are sent on this
+    /// path, only REPAIR frame and QUIC regular control data
+    pub fn set_path_fec_only(&mut self, local_addr: SocketAddr, peer_addr: SocketAddr, v: bool) -> Result<()> {
+        self.paths
+            .path_id_from_addrs(&(local_addr, peer_addr))
+            .and_then(|pid| self.paths.get_mut(pid).ok())
+            .map(|path| {path.fec_only = v} ).ok_or(Error::UnavailablePath)
     }
 
     /// Returns the size of the send quantum, in bytes.
@@ -7250,6 +7261,7 @@ impl Connection {
         // If there are flushable, almost full or blocked streams, use the
         // Application epoch.
         let send_path = self.paths.get(send_pid)?;
+        let can_send_fec = self.emit_fec && send_path.fec_only || self.paths.iter().all(|(_, p)| !p.fec_only);
         if (self.is_established() || self.is_in_early_data()) &&
             (self.should_send_handshake_done() ||
                 self.almost_full ||
@@ -7271,7 +7283,7 @@ impl Connection {
                 self.paths.has_path_status() ||
                 send_path.needs_ack_eliciting ||
                 send_path.probing_required() ||
-                (self.emit_fec && self.should_send_repair_symbol(send_pid)?))
+                (can_send_fec && self.should_send_repair_symbol(send_pid)?))
         {
             // Only clients can send 0-RTT packets.
             if !self.is_server && self.is_in_early_data() {
