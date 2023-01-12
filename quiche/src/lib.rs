@@ -4295,11 +4295,16 @@ impl Connection {
             }
         }
 
+        let fec_only_paths_exist = self.paths.iter().all(|(_, p)| !p.fec_only);
+        let should_send_repair_symbol = self.should_send_repair_symbol(send_pid)?;
         let path = self.paths.get_mut(send_pid)?;
 
+        let fec_only_path = path.fec_only;
+        let path_active = path.active();
+        let path_is_standby = path.is_standby();
         // Create CONNECTION_CLOSE frame. Try to send this only on the active
         // path, unless it is the last one available.
-        if path.active() || n_paths == 1 {
+        if path_active || n_paths == 1 {
             if let Some(conn_err) = self.local_error.as_ref() {
                 if conn_err.is_app {
                     // Create ApplicationClose frame.
@@ -4341,7 +4346,7 @@ impl Connection {
         if crypto_space.crypto_stream.is_flushable() &&
             left > frame::MAX_CRYPTO_OVERHEAD &&
             !is_closing &&
-            path.active()
+            path_active
         {
             let crypto_off = crypto_space.crypto_stream.send.off_front();
 
@@ -4421,9 +4426,10 @@ impl Connection {
 
 
         let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?, recovered: false}.wire_len();
-        let should_protect_packet = self.emit_fec 
+        let should_protect_packet = self.emit_fec
+                                    && !fec_only_path
                                     && !is_closing 
-                                    && self.paths.get(send_pid)?.active() 
+                                    && path_active 
                                     && pkt_type == packet::Type::Short
                                     && ((left > max_fec_overhead + 1 + frame::MAX_DGRAM_OVERHEAD + self.dgram_send_queue.peek_front_len().unwrap_or(left + 1) && do_dgram) // enough space to write a datagram frame and its content
                                         || (left > max_fec_overhead + 1 + frame::MAX_STREAM_OVERHEAD && stream_to_emit)); // enough space to write a stream frame
@@ -4433,11 +4439,11 @@ impl Connection {
             left -= std::cmp::min(32usize.saturating_sub(space_reduction_due_to_cwnd), left);
         }
 
-        let can_send_fec = self.emit_fec && (self.paths.get(send_pid)?.fec_only || self.paths.iter().all(|(_, p)| !p.fec_only));
+        let can_send_fec = self.emit_fec && (fec_only_path || fec_only_paths_exist);
 
         // Create REPAIR frame.
         if can_send_fec && pkt_type == packet::Type::Short
-            && self.should_send_repair_symbol(send_pid)?
+            && should_send_repair_symbol
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
                 match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
@@ -4486,8 +4492,8 @@ impl Connection {
         if (pkt_type == packet::Type::Short || pkt_type == packet::Type::ZeroRTT) &&
             left > frame::MAX_DGRAM_OVERHEAD &&
             !is_closing &&
-            path.active() &&
-            do_dgram
+            path_active &&
+            !fec_only_path && do_dgram
         {
             if let Some(max_dgram_payload) = max_dgram_len {
                 while let Some(len) = self.dgram_send_queue.peek_front_len() {
@@ -4564,9 +4570,10 @@ impl Connection {
         if (pkt_type == packet::Type::Short || pkt_type == packet::Type::ZeroRTT) &&
             left > frame::MAX_STREAM_OVERHEAD &&
             !is_closing &&
-            path.active() &&
+            path_active &&
+            !fec_only_path &&
             !dgram_emitted &&
-            (consider_standby_paths || !path.is_standby())
+            (consider_standby_paths || !path_is_standby)
         {
             while let Some(stream_id) = self.streams.peek_flushable() {
                 let stream = match self.streams.get_mut(stream_id) {
@@ -6447,7 +6454,7 @@ impl Connection {
     /// Returns the sequence number associated to the provided Connection ID.
     ///
     /// [`source_cids_left()`]: struct.Connection.html#method.source_cids_left
-    /// [`IdLimit`]: enum.Error.html#IdLimit
+    /// [`IdLimit`²]: enum.Error.html#IdLimit
     /// [`InvalidState`]: enum.Error.html#InvalidState
     pub fn new_source_cid(
         &mut self, scid: &ConnectionId, reset_token: u128, retire_if_needed: bool,
