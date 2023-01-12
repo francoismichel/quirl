@@ -4138,6 +4138,8 @@ impl Connection {
             }
         }
 
+        let fec_only_path = self.paths.get(send_pid)?.fec_only;
+
         // The preference of data-bearing frame to include in a packet
         // is managed by `self.emit_dgram`. However, whether any frames
         // can be sent depends on the state of their buffers. In the case
@@ -4156,7 +4158,8 @@ impl Connection {
 
 
         let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?, recovered: false}.wire_len();
-        let should_protect_packet = self.emit_fec 
+        let should_protect_packet = self.emit_fec
+                                    && !fec_only_path
                                     && !is_closing 
                                     && self.paths.get(send_pid)?.active() 
                                     && pkt_type == packet::Type::Short
@@ -4222,7 +4225,7 @@ impl Connection {
             left > frame::MAX_DGRAM_OVERHEAD &&
             !is_closing &&
             self.paths.get(send_pid)?.active() &&
-            do_dgram
+            !fec_only_path && do_dgram
         {
             if let Some(max_dgram_payload) = self.dgram_max_writable_len() {
                 while let Some(len) = self.dgram_send_queue.peek_front_len() {
@@ -4300,6 +4303,7 @@ impl Connection {
             left > frame::MAX_STREAM_OVERHEAD &&
             !is_closing &&
             self.paths.get(send_pid)?.active() &&
+            !fec_only_path &&
             !dgram_emitted &&
             (self.paths.consider_standby_paths() ||
                 !self.paths.get(send_pid)?.is_standby())
@@ -6107,7 +6111,7 @@ impl Connection {
     /// Returns the sequence number associated to the provided Connection ID.
     ///
     /// [`source_cids_left()`]: struct.Connection.html#method.source_cids_left
-    /// [`IdLimit`]: enum.Error.html#IdLimit
+    /// [`IdLimit`²]: enum.Error.html#IdLimit
     /// [`InvalidState`]: enum.Error.html#InvalidState
     pub fn new_source_cid(
         &mut self, scid: &ConnectionId, reset_token: u128, retire_if_needed: bool,
