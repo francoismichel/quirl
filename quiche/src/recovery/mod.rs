@@ -198,6 +198,7 @@ pub struct RecoveryConfig {
     hystart: bool,
     pacing: bool,
     max_pacing_rate: Option<u64>,
+    experimental_bbr_probertt_cwnd_gain: Option<f64>,
 }
 
 impl RecoveryConfig {
@@ -209,6 +210,7 @@ impl RecoveryConfig {
             hystart: config.hystart,
             pacing: config.pacing,
             max_pacing_rate: config.max_pacing_rate,
+            experimental_bbr_probertt_cwnd_gain: config.experimental_bbr_probertt_cwnd_gain,
         }
     }
 }
@@ -217,7 +219,8 @@ impl Recovery {
     pub fn new_with_config(recovery_config: &RecoveryConfig) -> Self {
         let initial_congestion_window =
             recovery_config.max_send_udp_payload_size * INITIAL_WINDOW_PACKETS;
-
+        let mut bbr_state = bbr::State::new();
+        bbr_state.probe_rtt_cwnd_gain = recovery_config.experimental_bbr_probertt_cwnd_gain;
         Recovery {
             loss_detection_timer: None,
 
@@ -310,7 +313,7 @@ impl Recovery {
             #[cfg(feature = "qlog")]
             qlog_metrics: QlogMetrics::default(),
 
-            bbr_state: bbr::State::new(),
+            bbr_state,
 
             outstanding_non_ack_eliciting: 0,
         }
