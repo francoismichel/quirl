@@ -44,8 +44,12 @@ impl BurstsFECScheduler {
         let stream_to_emit = conn.streams.has_flushable();
         // send if no more data to send && we sent less repair than half the cwin
 
-        let cwnd = path.recovery.cwnd();
-        let bif = cwnd.saturating_sub(path.recovery.cwnd_available());
+        let mut total_bif = 0;
+        for (_, path) in conn.paths.iter() {
+            if !path.fec_only {
+                total_bif += path.recovery.cwnd().saturating_sub(path.recovery.cwnd_available());
+            }
+        }
         let enough_room_in_cwin = path.recovery.cwnd_available() > minimum_room_in_cwin;
         let nothing_to_send = !dgrams_to_emit && !stream_to_emit;
         let current_sent_count = conn.sent_count;
@@ -66,7 +70,7 @@ impl BurstsFECScheduler {
                 if nothing_to_send && sent_enough_protected_data && enough_room_in_cwin
                     && (self.first_source_symbol_in_burst_sent_time.is_none() || now > self.first_source_symbol_in_burst_sent_time.unwrap() + fec_cooldown) {
                     // a burst of packets has occurred, so send repair symbols
-                    let bytes_to_protect = std::cmp::min(bif, current_sent_bytes - self.n_sent_bytes_when_last_repair);
+                    let bytes_to_protect = std::cmp::min(total_bif, current_sent_bytes - self.n_sent_bytes_when_last_repair);
                     let max_repair_data = if bytes_to_protect < 15000 {
                         bytes_to_protect*3/5
                     } else {
