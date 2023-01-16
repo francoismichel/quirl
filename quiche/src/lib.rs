@@ -723,6 +723,8 @@ pub struct Config {
 
     disable_dcid_reuse: bool,
 
+    experimental_bbr_probertt_cwnd_gain: Option<f64>,
+
     fec_scheduler_algorithm: FECSchedulerAlgorithm,
     emit_fec: bool,
     receive_fec: bool,
@@ -785,6 +787,8 @@ impl Config {
             max_stream_window: stream::MAX_STREAM_WINDOW,
 
             disable_dcid_reuse: false,
+
+            experimental_bbr_probertt_cwnd_gain: None,
 
             fec_scheduler_algorithm: FECSchedulerAlgorithm::NoRedundancy,
             emit_fec: false,
@@ -1199,6 +1203,12 @@ impl Config {
     /// The default value is `false`.
     pub fn set_disable_dcid_reuse(&mut self, v: bool) {
         self.disable_dcid_reuse = v;
+    }
+
+    /// EXPERIMENTAL: Sets the cwnd gain for the ProbeRTT phase of BBR when BBR is used instead
+    /// of capping the cwnd to 4 packets
+    pub fn set_bbr_probe_rtt_cwnd_gain(&mut self, v: f64) {
+        self.experimental_bbr_probertt_cwnd_gain = Some(v);
     }
 
     /// Sets the FEC redundancy scheduler algorithm used.
