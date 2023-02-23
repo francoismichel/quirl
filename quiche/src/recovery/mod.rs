@@ -26,6 +26,7 @@
 
 use std::cmp;
 
+use std::env;
 use std::str::FromStr;
 
 use std::time::Duration;
@@ -789,6 +790,10 @@ impl Recovery {
     pub fn cwnd_available(&self) -> usize {
         // Ignore cwnd when sending probe packets.
         if self.loss_probes.iter().any(|&x| x > 0) {
+            return std::usize::MAX;
+        }
+
+        if env::var("DEBUG_QUICHE_DISABLE_CC").unwrap_or_else(|_| "".to_string()) != "" {
             return std::usize::MAX;
         }
 
