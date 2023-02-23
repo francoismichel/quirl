@@ -35,11 +35,13 @@ impl BurstsFECScheduler {
         const DEFAULT_COOLDOWN_US: u64 = 0;
         const DEFAULT_FRAC_DENOMINATOR_TO_PROTECT: usize = 2;
         const DEFAULT_MINIMUM_ROOM_IN_CWIN: usize = 5000;
+        const DEFAULT_BANDWIDTH_PROBING_BPS: usize = 0;
         let burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
         let fec_cooldown_us: u64 = env::var("DEBUG_QUICHE_FEC_COOLDOWN_US").unwrap_or(DEFAULT_COOLDOWN_US.to_string()).parse().unwrap_or(DEFAULT_COOLDOWN_US);
         let fec_cooldown = std::time::Duration::from_micros(fec_cooldown_us);
         let fec_frac_denominator_to_protect: usize = env::var("DEBUG_QUICHE_DEFAULT_FRAC_DENOMINATOR_TO_PROTECT").unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT.to_string()).parse().unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT);
         let minimum_room_in_cwin = env::var("DEBUG_QUICHE_MINIMUM_ROOM_IN_CWIN").unwrap_or(DEFAULT_MINIMUM_ROOM_IN_CWIN.to_string()).parse().unwrap_or(DEFAULT_MINIMUM_ROOM_IN_CWIN);
+        let bandwidth_probing_bps = env::var("DEBUG_QUICHE_BANDWIDTH_PROBING_BPS").unwrap_or(DEFAULT_BANDWIDTH_PROBING_BPS.to_string()).parse().unwrap_or(DEFAULT_BANDWIDTH_PROBING_BPS);
         let dgrams_to_emit = conn.dgram_max_writable_len().is_some();
         let stream_to_emit = conn.streams.has_flushable();
         // send if no more data to send && we sent less repair than half the cwin
@@ -55,8 +57,13 @@ impl BurstsFECScheduler {
         let current_sent_count = conn.sent_count;
         let current_sent_bytes = conn.sent_bytes as usize;
         let sent_enough_protected_data = current_sent_bytes - self.n_bytes_sent_when_nothing_to_send > burst_size;
-        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}",
-                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send);
+        // we should probe using FEC if we are app-limited and the currently sent bitrate is not matching the bandwidth objective
+        let should_probe = path.recovery.app_limited() && 8.0*(bif as f64)/path.recovery.rtt().as_secs_f64() < bandwidth_probing_bps as f64;
+
+        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={} should_probe={}",
+                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
+                should_probe);
+
         
         self.state_sending_repair = match self.state_sending_repair {
             Some(state) => {
@@ -87,7 +94,7 @@ impl BurstsFECScheduler {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_bytes_sent_when_nothing_to_send = conn.sent_bytes as usize;
         }
-        let should_send = match self.state_sending_repair {
+        let should_send = should_probe || match self.state_sending_repair {
             Some(state) => (self.n_repair_in_flight as usize * symbol_size) < state.max_sending_repair_bytes,
             None => false,
         };
