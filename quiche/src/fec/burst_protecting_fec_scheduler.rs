@@ -58,7 +58,7 @@ impl BurstsFECScheduler {
         let current_sent_bytes = conn.sent_bytes as usize;
         let sent_enough_protected_data = current_sent_bytes - self.n_bytes_sent_when_nothing_to_send > burst_size;
         // we should probe using FEC if we are app-limited and the currently sent bitrate is not matching the bandwidth objective
-        let should_probe = path.recovery.app_limited() && 8.0*(bif as f64)/path.recovery.rtt().as_secs_f64() < bandwidth_probing_bps as f64;
+        let should_probe = path.recovery.app_limited() && 8.0*(total_bif as f64)/path.recovery.rtt().as_secs_f64() < bandwidth_probing_bps as f64;
 
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={} should_probe={}",
                 dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
