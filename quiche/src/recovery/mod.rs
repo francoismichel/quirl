@@ -784,6 +784,9 @@ impl Recovery {
     }
 
     pub fn cwnd(&self) -> usize {
+        if env::var("DEBUG_QUICHE_DISABLE_CC").unwrap_or_else(|_| "".to_string()) != "" {
+            return std::usize::MAX-1;
+        }
         self.congestion_window
     }
 
@@ -794,7 +797,7 @@ impl Recovery {
         }
 
         if env::var("DEBUG_QUICHE_DISABLE_CC").unwrap_or_else(|_| "".to_string()) != "" {
-            return std::usize::MAX;
+            return std::usize::MAX-1;
         }
 
         // Open more space (snd_cnt) for PRR when allowed.
