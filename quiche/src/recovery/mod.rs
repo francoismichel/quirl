@@ -1215,6 +1215,8 @@ pub enum CongestionControlAlgorithm {
     CUBIC = 1,
     /// BBR congestion control algorithm. `bbr` in a string form.
     BBR   = 2,
+    /// DISABLED congestion control. `disabled` in a string form.
+    DISABLED = 3,
 }
 
 impl FromStr for CongestionControlAlgorithm {
@@ -1228,6 +1230,7 @@ impl FromStr for CongestionControlAlgorithm {
             "reno" => Ok(CongestionControlAlgorithm::Reno),
             "cubic" => Ok(CongestionControlAlgorithm::CUBIC),
             "bbr" => Ok(CongestionControlAlgorithm::BBR),
+            "disabled" => Ok(CongestionControlAlgorithm::DISABLED),
 
             _ => Err(crate::Error::CongestionControl),
         }
@@ -1274,6 +1277,7 @@ impl From<CongestionControlAlgorithm> for &'static CongestionControlOps {
             CongestionControlAlgorithm::Reno => &reno::RENO,
             CongestionControlAlgorithm::CUBIC => &cubic::CUBIC,
             CongestionControlAlgorithm::BBR => &bbr::BBR,
+            CongestionControlAlgorithm::DISABLED => &disabled_cc::DISABLED_CC,
         }
     }
 }
@@ -2330,3 +2334,4 @@ mod hystart;
 mod pacer;
 mod prr;
 mod reno;
+mod disabled_cc;
