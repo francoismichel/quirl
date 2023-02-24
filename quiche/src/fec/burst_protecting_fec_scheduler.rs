@@ -134,6 +134,7 @@ impl BurstsFECScheduler {
         if should_send {
             self.n_sent_stream_bytes_when_last_repair = current_sent_stream_bytes;
         }
+        trace!("fec_scheduler returned {}", should_send);
         should_send
     }
 
