@@ -50,15 +50,19 @@ impl BurstsFECScheduler {
                 total_bif += path.recovery.cwnd().saturating_sub(path.recovery.cwnd_available());
             }
         }
-        let enough_room_in_cwin = path.recovery.cwnd_available() > minimum_room_in_cwin;
+        let cwin_available = path.recovery.cwnd_available();
+        let enough_room_in_cwin = cwin_available > minimum_room_in_cwin;
         let nothing_to_send = !dgrams_to_emit && !stream_to_emit;
         let current_sent_count = conn.sent_count;
         let current_sent_bytes = conn.sent_bytes as usize;
         let sent_enough_protected_data = current_sent_bytes - self.n_bytes_sent_when_nothing_to_send > burst_size;
 
-        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}",
-                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send);
-    
+        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
+                current_sent_bytes={} old_sent_bytes={} sent_enough_protected_data={} enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}",
+                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
+                current_sent_bytes, self.n_bytes_sent_when_nothing_to_send, sent_enough_protected_data, enough_room_in_cwin,
+                cwin_available, minimum_room_in_cwin);
+        
         self.state_sending_repair = match self.state_sending_repair {
             Some(state) => {
                 if now.duration_since(state.start_time) > path.recovery.rtt() {
