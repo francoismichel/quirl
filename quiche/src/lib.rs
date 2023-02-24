@@ -5032,6 +5032,7 @@ impl Connection {
     pub fn stream_send(
         &mut self, stream_id: u64, buf: &[u8], fin: bool,
     ) -> Result<usize> {
+        trace!("stream_send tx_cap: {}", self.tx_cap);
         // We can't write on the peer's unidirectional streams.
         if !stream::is_bidi(stream_id) &&
             !stream::is_local(stream_id, self.is_server)
@@ -7858,6 +7859,7 @@ impl Connection {
             .map(|(_, p)| p.recovery.cwnd_available())
             .filter(|cwnd| *cwnd != std::usize::MAX)
             .sum();
+        trace!("update_tx_cap(), cwin_available: {}, max_tx_data: {}, tx_data: {}", cwin_available, self.max_tx_data, self.tx_data);
         self.tx_cap = cmp::min(
             cwin_available,
             (self.max_tx_data - self.tx_data)
