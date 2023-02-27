@@ -384,6 +384,7 @@ extern crate log;
 
 use networkcoding::DecoderError;
 use networkcoding::EncoderError;
+use networkcoding::RepairSymbol;
 use networkcoding::SourceSymbolMetadata;
 #[cfg(feature = "qlog")]
 use qlog::events::connectivity::TransportOwner;
@@ -4130,7 +4131,7 @@ impl Connection {
             && self.should_send_repair_symbol(send_pid)?
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
-                if left >= self.fec_encoder.next_repair_symbol_size(md)? {
+                if left >= octets::varint_len(0x32) + self.fec_encoder.next_repair_symbol_size(md)? {
                     match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
                         Ok(rs) => {
                             let frame = frame::Frame::Repair {
