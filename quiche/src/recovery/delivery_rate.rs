@@ -233,6 +233,7 @@ mod tests {
                 first_sent_time: now,
                 is_app_limited: false,
                 has_data: false,
+                retransmitted_for_probing: false,
             };
 
             r.on_packet_sent(
@@ -297,6 +298,7 @@ mod tests {
                 first_sent_time: now,
                 is_app_limited: false,
                 has_data: false,
+                retransmitted_for_probing: false,
             };
 
             r.on_packet_sent(
@@ -336,6 +338,7 @@ mod tests {
                 first_sent_time: now,
                 is_app_limited: false,
                 has_data: false,
+                retransmitted_for_probing: false,
             };
 
             r.on_packet_sent(

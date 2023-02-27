@@ -729,6 +729,8 @@ pub struct Config {
     emit_fec: bool,
     receive_fec: bool,
     fec_window_size: usize,
+
+    bw_probe_bps: f64,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -794,6 +796,8 @@ impl Config {
             emit_fec: false,
             receive_fec: false,
             fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
+
+            bw_probe_bps: 0.0,
         })
     }
 
@@ -1237,6 +1241,12 @@ impl Config {
     pub fn receive_fec(&mut self, v: bool) {
         self.receive_fec = v;
     }
+
+    /// sets a target bandwidth to probe for by resending existing
+    /// application data or sending FEC if possible
+    pub fn set_bandwidth_probing_bps(&mut self, v: f64) {
+        self.bw_probe_bps = v;
+    }
 }
 
 /// A QUIC connection.
@@ -1445,6 +1455,9 @@ pub struct Connection {
 
     /// Structure used when coping with abandoned paths in multipath.
     wire_pids_to_close: VecDeque<(u64, Option<u64>)>,
+    /// the minimum amount of bandwidth to probe for when application-limited,
+    /// in bits per second
+    bw_probe_bps: f64,
 }
 
 /// Creates a new server-side connection.
@@ -1889,6 +1902,8 @@ impl Connection {
             receive_fec: config.receive_fec,
             fec_window_size: config.fec_window_size,
             recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
+
+            bw_probe_bps: config.bw_probe_bps,
         };
 
         // Don't support multipath with zero-length CIDs.
@@ -4185,7 +4200,7 @@ impl Connection {
 
         // Create REPAIR frame.
         if can_send_fec && pkt_type == packet::Type::Short
-            && self.should_send_repair_symbol(send_pid)?
+            && (self.should_send_repair_symbol(send_pid)? || self.should_probe_bw())
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
                 match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
@@ -4318,6 +4333,33 @@ impl Connection {
             (self.paths.consider_standby_paths() ||
                 !self.paths.get(send_pid)?.is_standby())
         {
+
+
+            // first, do bandwidth probing if needed and possible
+            if !self.streams.has_flushable() {
+                // bw probing is needed when 1) there is no flushable stream 2) the current available bitrate does not match the target
+                if self.should_probe_bw() {
+                    let path = self.paths.get_mut(send_pid)?;
+                    if let Some((packet_number, stream_id, offset, len)) = path.recovery.get_unacked_stream_frame_for_probing(epoch) {
+                        if let Some(stream) = self.streams.get_mut(stream_id) {
+                            let was_flushable = stream.is_flushable();
+                            stream.send.retransmit(offset, std::cmp::max(left, len));
+                            if (stream.is_flushable()) && !was_flushable
+                            {
+                                let urgency = stream.urgency;
+                                let incremental = stream.incremental;
+                                self.streams.push_flushable(
+                                    stream_id,
+                                    urgency,
+                                    incremental,
+                                );
+                                trace!("probing: retransmit content of packet {:?} proactively", packet_number);
+                            }
+                        }
+                    }
+                }
+            }
+
             while let Some(stream_id) = self.streams.pop_flushable() {
                 let stream = match self.streams.get_mut(stream_id) {
                     Some(v) => v,
@@ -4640,6 +4682,7 @@ impl Connection {
             first_sent_time: now,
             is_app_limited: false,
             has_data,
+            retransmitted_for_probing: false,
         };
 
         if in_flight && self.delivery_rate_check_if_app_limited(send_pid) {
@@ -6711,6 +6754,21 @@ impl Connection {
         Ok(should_send_repair)
     }
 
+    fn should_probe_bw(&mut self) -> bool {
+        let available_bps: f64 = self.paths
+        .iter()
+        .map(|(_, p)| 8.0*(p.recovery.cwnd() as f64) / p.recovery.rtt().as_secs_f64())
+        .into_iter()
+        .sum();
+
+        let should_probe = available_bps < self.bw_probe_bps;
+        if should_probe {
+            trace!("try probing for bandwidth ({} available bps < {} target bps)",
+                    available_bps, self.bw_probe_bps);
+        }
+        return should_probe;
+    }
+
     fn process_peer_transport_params(
         &mut self, peer_params: TransportParams,
     ) -> Result<()> {
@@ -6913,7 +6971,8 @@ impl Connection {
                 self.paths.has_path_status() ||
                 send_path.needs_ack_eliciting ||
                 send_path.probing_required() ||
-                (can_send_fec && self.should_send_repair_symbol(send_pid)?))
+                (can_send_fec && self.should_send_repair_symbol(send_pid)?) ||
+                self.should_probe_bw())
         {
             // Only clients can send 0-RTT packets.
             if !self.is_server && self.is_in_early_data() {

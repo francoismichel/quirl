@@ -638,6 +638,36 @@ impl Recovery {
         Ok((lost_packets, lost_bytes))
     }
 
+    // returns a (packet_number, stream_id, off, len) tuble indicating a stream portion to retransmit
+    // when possible, the stream frame will belong to a previously sent packet with a number
+    // above sent_after. If not possible, it will be the first stream frame in an unacked packet
+    // Returns None if no stream frame could be found.
+    pub fn get_unacked_stream_frame_for_probing(&mut self, epoch: packet::Epoch) -> Option<(SpacedPktNum, u64, u64, usize)> {
+        let unacked_iter = self.sent[epoch]
+                .iter_mut()
+                // Skip packets that have already been acked or lost.
+                .filter(|p| !p.retransmitted_for_probing && p.time_acked.is_none());
+        for unacked in unacked_iter {
+            for frame in &unacked.frames {
+                if let &Frame::StreamHeader { stream_id, offset, length, .. } = frame {
+                    unacked.retransmitted_for_probing = true;
+                    return Some((unacked.pkt_num, stream_id, offset, length));
+                }
+            }
+        }
+
+        for unacked in self.sent[epoch].iter_mut().filter(|p| p.time_acked.is_none()) {
+            for frame in &unacked.frames {
+                if let &Frame::StreamHeader { stream_id, offset, length, .. } = frame {
+                    unacked.retransmitted_for_probing = true;
+                    return Some((unacked.pkt_num, stream_id, offset, length));
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn on_loss_detection_timeout(
         &mut self, handshake_status: HandshakeStatus, now: Instant,
         trace_id: &str,
@@ -1357,6 +1387,8 @@ pub struct Sent {
     pub is_app_limited: bool,
 
     pub has_data: bool,
+
+    pub retransmitted_for_probing: bool,
 }
 
 impl std::fmt::Debug for Sent {
@@ -1595,6 +1627,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1621,6 +1654,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1647,6 +1681,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1673,6 +1708,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1732,6 +1768,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1758,6 +1795,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1830,6 +1868,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1856,6 +1895,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1882,6 +1922,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1908,6 +1949,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -1991,6 +2033,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -2017,6 +2060,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -2043,6 +2087,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -2069,6 +2114,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -2165,6 +2211,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -2223,6 +2270,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -2254,6 +2302,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
@@ -2282,6 +2331,7 @@ mod tests {
             first_sent_time: now,
             is_app_limited: false,
             has_data: false,
+            retransmitted_for_probing: false,
         };
 
         r.on_packet_sent(
