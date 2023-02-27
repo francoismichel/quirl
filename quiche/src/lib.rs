@@ -4130,23 +4130,25 @@ impl Connection {
             && self.should_send_repair_symbol(send_pid)?
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
-                match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
-                    Ok(rs) => {
-                        let frame = frame::Frame::Repair {
-                            repair_symbol: rs,
-                        };
-                        if push_frame_to_pkt!(b, frames, frame, left) {
-                            in_flight = true;
-                            self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
-                            ack_eliciting = true;
-                            self.repair_symbols_sent_count += 1;
-                        } else {
-                            return Err(BufferTooShort);
+                if left >= self.fec_encoder.next_repair_symbol_size(md)? {
+                    match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
+                        Ok(rs) => {
+                            let frame = frame::Frame::Repair {
+                                repair_symbol: rs,
+                            };
+                            if push_frame_to_pkt!(b, frames, frame, left) {
+                                in_flight = true;
+                                self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
+                                ack_eliciting = true;
+                                self.repair_symbols_sent_count += 1;
+                            } else {
+                                return Err(BufferTooShort);
+                            }
                         }
-                    }
-                    Err(EncoderError::NoSymbolToGenerate) => (),    // because generate_up_to may not be able to generate even if can_generate returned true
-                    Err(err) => {
-                        return Err(Error::from(err));
+                        Err(EncoderError::NoSymbolToGenerate) => (),    // because generate_up_to may not be able to generate even if can_generate returned true
+                        Err(err) => {
+                            return Err(Error::from(err));
+                        }
                     }
                 }
             }
