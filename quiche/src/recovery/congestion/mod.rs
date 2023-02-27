@@ -48,6 +48,9 @@ pub struct Congestion {
     // RFC6937 PRR.
     pub(crate) prr: prr::PRR,
 
+    // used in a real-time setup (e.g. video-conferencing)
+    real_time: bool,
+
     // The maximum size of a data aggregate scheduled and
     // transmitted together.
     send_quantum: usize,
@@ -122,6 +125,8 @@ impl Congestion {
                 recovery_config.max_send_udp_payload_size,
                 recovery_config.max_pacing_rate,
             ),
+
+            real_time: recovery_config.real_time,
 
             prr: prr::PRR::default(),
 

@@ -710,6 +710,11 @@ impl Error {
             Error::OutOfIdentifiers => -18,
             Error::KeyUpdate => -19,
             Error::CryptoBufferExceeded => -20,
+            Error::FECScheduler => -0xFEC1,
+            Error::FECEncoderError(_) => -0xFEC2,
+            Error::FECDecoderError(_) => -0xFEC3,
+            Error::BadSymbolID => -0xFEC4,
+            Error::SourceSymbolCreationError => -0xFEC5,
         }
     }
 }
@@ -814,6 +819,18 @@ pub enum QlogLevel {
     Extra = 2,
 }
 
+/// Recovered symbol, indicating the time it was recovered and the
+/// time it was received from the network if it has been
+#[derive(Clone)]
+pub struct RecoveredSymbol {
+    /// The Instant when it was recovered using FEC
+    pub recovered_time: std::time::Instant,
+    /// The Instant when it was received from the network, or None
+    /// if it was never received from the network
+    pub received_time: Option<std::time::Instant>,
+}
+
+
 /// Stores configuration shared between multiple connections.
 pub struct Config {
     local_transport_params: TransportParams,
@@ -854,6 +871,8 @@ pub struct Config {
     emit_fec: bool,
     receive_fec: bool,
     fec_window_size: usize,
+
+    real_time: bool,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -904,8 +923,8 @@ impl Config {
             initial_congestion_window_packets:
                 DEFAULT_INITIAL_CONGESTION_WINDOW_PACKETS,
             pmtud: false,
-            hystart: true,
-            pacing: true,
+            hystart: std::env::var("QUICHE_FEC_OVERRIDE_HYSTART").unwrap_or_default().parse().unwrap_or(1) != 0,
+            pacing: std::env::var("QUICHE_FEC_OVERRIDE_PACING").unwrap_or_default().parse().unwrap_or(1) != 0,
             max_pacing_rate: None,
 
             dgram_recv_max_queue_len: DEFAULT_MAX_DGRAM_QUEUE_LEN,
@@ -923,10 +942,12 @@ impl Config {
 
             disable_dcid_reuse: false,
 
-            fec_scheduler_algorithm: FECSchedulerAlgorithm::NoRedundancy,
-            emit_fec: false,
-            receive_fec: false,
+            // allow overriding these parameters from env vars to allow modifying applications from the outside
+            fec_scheduler_algorithm: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
+            emit_fec:  std::env::var("QUICHE_FEC_OVERRIDE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
+            receive_fec: std::env::var("QUICHE_FEC_OVERRIDE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
             fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
+            real_time: false,
         })
     }
 
@@ -1423,10 +1444,17 @@ impl Config {
     pub fn receive_fec(&mut self, v: bool) {
         self.receive_fec = v;
     }
+    
+    /// if set, consider the connection as a connection transporting real-time media
+    pub fn set_real_time(&mut self, v: bool) {
+        self.real_time = v;
+    }
 }
 
 /// A QUIC connection.
 pub struct Connection {
+    /// start time for the connection
+    start_time: std::time::Instant,
     /// QUIC wire version used for the connection.
     version: u32,
 
@@ -1635,6 +1663,8 @@ pub struct Connection {
     fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
     fec_window_size: usize,
     recovered_symbols_need_ack: ranges::RangeSet,
+    // for stats purpose, keep the metadata of the recovered source symbols
+    recovered_symbols_md_history: std::collections::HashMap<u64, RecoveredSymbol>,
 
 
     /// Whether to emit DATAGRAM frames in the next packet.
@@ -1961,7 +1991,11 @@ impl Connection {
             reset_token,
         );
 
+        let max_pkt_header_size = 1 + 20 + 4;
+        let max_crypto_overhead = 16;
+
         let mut conn = Connection {
+            start_time: std::time::Instant::now(),
             version: config.version,
 
             ids,
@@ -2103,10 +2137,11 @@ impl Connection {
 
             max_amplification_factor: config.max_amplification_factor,
             
-            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(1280, 5000)),
-            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(1280, 5000)),
+            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, 5000)),
+            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, 5000)),
             fec_scheduler: Some(fec::fec_scheduler::new_fec_scheduler(config.fec_scheduler_algorithm)),
             latest_metadata_of_symbol_with_fec_protected_frames: None,
+            recovered_symbols_md_history: std::collections::HashMap::new(),
 
 
             emit_fec: config.emit_fec,
@@ -2499,6 +2534,7 @@ impl Connection {
     ) -> Result<usize> {
         let now = time::Instant::now();
 
+        trace!("recv_single at {:?}", now.duration_since(self.start_time));
         if buf.is_empty() {
             return Err(Error::Done);
         }
@@ -3615,6 +3651,9 @@ impl Connection {
         &mut self, out: &mut [u8], send_pid: usize, has_initial: bool,
         now: time::Instant,
     ) -> Result<(packet::Type, usize)> {
+        let now = time::Instant::now();
+
+        trace!("send_single at {:?}", now.duration_since(self.start_time));
         if out.is_empty() {
             return Err(Error::BufferTooShort);
         }
@@ -4437,23 +4476,30 @@ impl Connection {
             && self.should_send_repair_symbol(send_pid)?
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
-                match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
-                    Ok(rs) => {
-                        let frame = frame::Frame::Repair {
-                            repair_symbol: rs,
-                        };
-                        if push_frame_to_pkt!(b, frames, frame, left) {
-                            in_flight = true;
-                            self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
-                            ack_eliciting = true;
-                            self.repair_symbols_sent_count += 1;
-                        } else {
-                            return Err(BufferTooShort);
+                if left >= octets::varint_len(0x32) + self.fec_encoder.next_repair_symbol_size(md)? {
+                    match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
+                        Ok(rs) => {
+                            let frame = frame::Frame::Repair {
+                                repair_symbol: rs,
+                            };
+                            if push_frame_to_pkt!(b, frames, frame, left) {
+                                in_flight = true;
+                                self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
+                                ack_eliciting = true;
+                                self.repair_symbols_sent_count += 1;
+                            } else {
+                                return Err(BufferTooShort);
+                            }
+                            let first_md = self.fec_encoder.first_metadata();
+                            if let Some(first_md) = first_md {
+                                trace!("packet REPAIR frame protecting symbols [{}, {}]",
+                                        source_symbol_metadata_to_u64(first_md), source_symbol_metadata_to_u64(md));
+                            }
                         }
-                    }
-                    Err(EncoderError::NoSymbolToGenerate) => (),    // because generate_up_to may not be able to generate even if can_generate returned true
-                    Err(err) => {
-                        return Err(Error::from(err));
+                        Err(EncoderError::NoSymbolToGenerate) => (),    // because generate_up_to may not be able to generate even if can_generate returned true
+                        Err(err) => {
+                            return Err(Error::from(err));
+                        }
                     }
                 }
             }
@@ -4819,14 +4865,6 @@ impl Connection {
             if packet_fec_protected {
                 self.latest_metadata_of_symbol_with_fec_protected_frames = Some(source_symbol_metadata);
             }
-        }
-
-        for frame in &mut frames {
-            trace!("{} tx frm {:?}", self.trace_id, frame);
-
-            qlog_with_type!(QLOG_PACKET_TX, self.qlog, _q, {
-                qlog_frames.push(frame.to_qlog());
-            });
         }
 
         qlog_with_type!(QLOG_PACKET_TX, self.qlog, q, {
@@ -6120,7 +6158,12 @@ impl Connection {
                 .as_ref()
                 .map(|key_update| key_update.timer);
 
-            let timers = [self.idle_timer, path_timer, key_update_timer];
+            let fec_scheduler_timer = match &self.fec_scheduler {
+                None => None,
+                Some(s) => s.timeout(),
+            };
+
+            let timers = [self.idle_timer, path_timer, key_update_timer, fec_scheduler_timer];
 
             timers.iter().filter_map(|&x| x).min()
         }
@@ -6870,6 +6913,7 @@ impl Connection {
             lost: self.lost_count,
             retrans: self.retrans_count,
             recov: self.recov_count,
+            recovered_and_received: self.recovered_symbols_md_history.clone(),
             repair_received: self.repair_symbols_received_count,
             repair_sent: self.repair_symbols_sent_count,
             sent_bytes: self.sent_bytes,
@@ -7715,17 +7759,21 @@ impl Connection {
             },
 
             frame::Frame::Repair { repair_symbol } => {
+                trace!("received repair symbol, current window bounds are {:?}", self.fec_decoder.bounds());
                 self.repair_symbols_received_count += 1;
-                match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
-                    Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
-                    Err(err) => return Err(Error::from(err)),
-                    Ok((_, decoded_symbols)) => {
-                        for decoded_symbol in decoded_symbols {
-                            self.recov_count += 1;
-                            let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
-                            trace!("process decoded symbol {}", mdu64);
-                            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
-                            self.recovered_symbols_need_ack.push_item(mdu64);
+                if self.receive_fec {
+                    match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
+                        Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
+                        Err(err) => return Err(Error::from(err)),
+                        Ok((_, decoded_symbols)) => {
+                            for decoded_symbol in decoded_symbols {
+                                self.recov_count += 1;
+                                let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                                trace!("process decoded symbol {}", mdu64);
+                                self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                                self.recovered_symbols_need_ack.push_item(mdu64);
+                                self.recovered_symbols_md_history.insert(mdu64, RecoveredSymbol { recovered_time: now, received_time: None });
+                            }
                         }
                     }
                 }
@@ -7733,25 +7781,31 @@ impl Connection {
 
 
             frame::Frame::SourceSymbol { source_symbol } => {
-                let id = source_symbol_metadata_to_u64(source_symbol.metadata());
-                if self.fec_window_size as u64 <= id {
-                    let path = self.paths.get_active()?;
-                    self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_window_size as u64), Some(now - path.recovery.pto()));
-                }
-                
-                match self.fec_decoder.receive_source_symbol(source_symbol, now) {
-                    Err(DecoderError::UnusedSourceSymbol) => {
-                        info!("received a source symbol unused by the decoder");
-                    },
-                    Err(err) => return Err(Error::from(err)),
-                    Ok(decoded_symbols) => {
-                        for decoded_symbol in decoded_symbols {
-                            self.recov_count += 1;
-                            let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
-                            trace!("process decoded symbol {}", mdu64);
-                            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
-                            self.recovered_symbols_need_ack.push_item(mdu64);
+                if self.receive_fec {
+                    let id = source_symbol_metadata_to_u64(source_symbol.metadata());
+                    if self.fec_window_size as u64 <= id {
+                        let path = self.paths.get_active()?;
+                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_window_size as u64), Some(now - path.recovery.pto()));
+                    }
+
+                    match self.fec_decoder.receive_source_symbol(source_symbol, now) {
+                        Err(DecoderError::UnusedSourceSymbol) => {
+                            info!("received a source symbol unused by the decoder");
+                        },
+                        Err(err) => return Err(Error::from(err)),
+                        Ok(decoded_symbols) => {
+                            for decoded_symbol in decoded_symbols {
+                                self.recov_count += 1;
+                                let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                                trace!("process decoded symbol {}", mdu64);
+                                self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                                self.recovered_symbols_need_ack.push_item(mdu64);
+                                self.recovered_symbols_md_history.insert(mdu64, RecoveredSymbol { recovered_time: now, received_time: None });
+                            }
                         }
+                    }
+                    if let Some(recovered_symbol) = self.recovered_symbols_md_history.get_mut(&id) {
+                        recovered_symbol.received_time = Some(now);
                     }
                 }
             },
@@ -8299,6 +8353,9 @@ pub struct Stats {
 
     /// The number of source symbols recovered using FEC
     pub recov: usize,
+
+    /// The both recovered and received symbols 
+    pub recovered_and_received: std::collections::HashMap<u64, RecoveredSymbol>,
 
     /// The number of repair symbols sent
     pub repair_sent: usize,
