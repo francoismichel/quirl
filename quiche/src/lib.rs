@@ -732,6 +732,7 @@ pub struct Config {
     fec_window_size: usize,
 
     bw_probe_bps: f64,
+    bw_probe_using_fec: bool,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -799,6 +800,7 @@ impl Config {
             fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
 
             bw_probe_bps: 0.0,
+            bw_probe_using_fec: false,
         })
     }
 
@@ -1248,6 +1250,11 @@ impl Config {
     pub fn set_bandwidth_probing_bps(&mut self, v: f64) {
         self.bw_probe_bps = v;
     }
+
+    /// if set, use FEC REPAIR frames for probing bandwidth
+    pub fn use_fec_for_bandwidth_probing(&mut self, v: bool) {
+        self.bw_probe_using_fec = v;
+    }
 }
 
 /// A QUIC connection.
@@ -1459,6 +1466,8 @@ pub struct Connection {
     /// the minimum amount of bandwidth to probe for when application-limited,
     /// in bits per second
     bw_probe_bps: f64,
+
+    bw_probe_using_fec: bool,
 }
 
 /// Creates a new server-side connection.
@@ -1905,6 +1914,7 @@ impl Connection {
             recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
 
             bw_probe_bps: config.bw_probe_bps,
+            bw_probe_using_fec: config.bw_probe_using_fec,
         };
 
         // Don't support multipath with zero-length CIDs.
@@ -4201,7 +4211,7 @@ impl Connection {
 
         // Create REPAIR frame.
         if can_send_fec && pkt_type == packet::Type::Short
-            && (self.should_send_repair_symbol(send_pid)? || self.should_probe_bw())
+            && (self.should_send_repair_symbol(send_pid)? || (self.should_probe_bw() && self.bw_probe_using_fec))
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
                 if left >= octets::varint_len(0x32) + self.fec_encoder.next_repair_symbol_size(md)? {
