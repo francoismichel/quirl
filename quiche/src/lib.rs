@@ -731,7 +731,8 @@ pub struct Config {
     receive_fec: bool,
     fec_window_size: usize,
 
-    bw_probe_bps: f64,
+    bw_probe_start_threshold_bps: f64,
+    bw_probe_target_bps: f64,
     bw_probe_using_fec: bool,
 }
 
@@ -799,7 +800,8 @@ impl Config {
             receive_fec: false,
             fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
 
-            bw_probe_bps: 0.0,
+            bw_probe_start_threshold_bps: 0.0,
+            bw_probe_target_bps: 0.0,
             bw_probe_using_fec: false,
         })
     }
@@ -1246,9 +1248,12 @@ impl Config {
     }
 
     /// sets a target bandwidth to probe for by resending existing
+    /// QUIC will perform probing as soon as its rate gets under threshold_bps
+    /// and will try to reach the specified target_bps
     /// application data or sending FEC if possible
-    pub fn set_bandwidth_probing_bps(&mut self, v: f64) {
-        self.bw_probe_bps = v;
+    pub fn set_bandwidth_probing_bps(&mut self, threshold_bps: f64, target_bps: f64) {
+        self.bw_probe_start_threshold_bps = threshold_bps;
+        self.bw_probe_target_bps = target_bps;
     }
 
     /// if set, use FEC REPAIR frames for probing bandwidth
@@ -1463,9 +1468,18 @@ pub struct Connection {
 
     /// Structure used when coping with abandoned paths in multipath.
     wire_pids_to_close: VecDeque<(u64, Option<u64>)>,
+    
     /// the minimum amount of bandwidth to probe for when application-limited,
+    /// the bandwidth threshold below which we start proginb for more bandwidth when app limited
     /// in bits per second
-    bw_probe_bps: f64,
+    bw_probe_start_threshold_bps: f64,
+
+
+    /// the target bandwidth to probe for when app-limited and the threshold
+    /// triggered probing, in bots per second
+    bw_probe_target_bps: f64,
+
+    bw_probe_reached_target: bool,
 
     bw_probe_using_fec: bool,
 }
@@ -1913,7 +1927,9 @@ impl Connection {
             fec_window_size: config.fec_window_size,
             recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
 
-            bw_probe_bps: config.bw_probe_bps,
+            bw_probe_start_threshold_bps: config.bw_probe_start_threshold_bps,
+            bw_probe_target_bps: config.bw_probe_target_bps,
+            bw_probe_reached_target: true,
             bw_probe_using_fec: config.bw_probe_using_fec,
         };
 
@@ -6774,12 +6790,15 @@ impl Connection {
         .into_iter()
         .sum();
 
-        let should_probe = available_bps < self.bw_probe_bps;
-        if should_probe {
+        if available_bps < self.bw_probe_start_threshold_bps {
             trace!("try probing for bandwidth ({} available bps < {} target bps)",
-                    available_bps, self.bw_probe_bps);
+                    available_bps, self.bw_probe_start_threshold_bps);
+            self.bw_probe_reached_target = false;
+        } else if self.bw_probe_target_bps <= available_bps {
+            self.bw_probe_reached_target = true;
         }
-        return should_probe;
+
+        return !self.bw_probe_reached_target;
     }
 
     fn process_peer_transport_params(
