@@ -164,6 +164,8 @@ pub struct Recovery {
 
     max_datagram_size: usize,
 
+    real_time: bool,
+
     cubic_state: cubic::State,
 
     // HyStart++.
@@ -203,6 +205,7 @@ pub struct RecoveryConfig {
     pacing: bool,
     max_pacing_rate: Option<u64>,
     initial_congestion_window_packets: usize,
+    real_time: bool,
 }
 
 impl RecoveryConfig {
@@ -216,6 +219,7 @@ impl RecoveryConfig {
             max_pacing_rate: config.max_pacing_rate,
             initial_congestion_window_packets: config
                 .initial_congestion_window_packets,
+            real_time: config.real_time,
         }
     }
 }
@@ -291,6 +295,8 @@ impl Recovery {
             congestion_recovery_start_time: None,
 
             max_datagram_size: recovery_config.max_send_udp_payload_size,
+
+            real_time: recovery_config.real_time,
 
             cc_ops: recovery_config.cc_ops,
 

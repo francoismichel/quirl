@@ -774,6 +774,8 @@ pub struct Config {
     emit_fec: bool,
     receive_fec: bool,
     fec_window_size: usize,
+
+    real_time: bool,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -841,6 +843,7 @@ impl Config {
             emit_fec: false,
             receive_fec: false,
             fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
+            real_time: false,
         })
     }
 
@@ -1320,6 +1323,11 @@ impl Config {
     /// decides whether REPAIR frames should be processed to recover data
     pub fn receive_fec(&mut self, v: bool) {
         self.receive_fec = v;
+    }
+    
+    /// if set, consider the connection as a connection transporting real-time media
+    pub fn set_real_time(&mut self, v: bool) {
+        self.real_time = v;
     }
 }
 
