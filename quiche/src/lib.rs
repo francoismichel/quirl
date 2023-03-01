@@ -731,6 +731,8 @@ pub struct Config {
     receive_fec: bool,
     fec_window_size: usize,
 
+    real_time: bool,
+
     bw_probe_start_threshold_bps: f64,
     bw_probe_target_bps: f64,
     bw_probe_using_fec: bool,
@@ -803,6 +805,7 @@ impl Config {
             bw_probe_start_threshold_bps: 0.0,
             bw_probe_target_bps: 0.0,
             bw_probe_using_fec: false,
+            real_time: false,
         })
     }
 
@@ -1259,6 +1262,11 @@ impl Config {
     /// if set, use FEC REPAIR frames for probing bandwidth
     pub fn use_fec_for_bandwidth_probing(&mut self, v: bool) {
         self.bw_probe_using_fec = v;
+    }
+
+    /// if set, consider the connection as a connection transporting real-time media
+    pub fn set_real_time(&mut self, v: bool) {
+        self.real_time = v;
     }
 }
 
