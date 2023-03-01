@@ -83,10 +83,10 @@ impl BurstsFECScheduler {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_bytes_sent_when_nothing_to_send = conn.sent_bytes as usize;
         }
-        let should_send = match self.state_sending_repair {
+        let should_send = should_probe || (enough_room_in_cwin && match self.state_sending_repair {
             Some(state) => (self.n_repair_in_flight as usize * symbol_size) < state.max_sending_repair_bytes,
             None => false,
-        };
+        });
         if should_send {
             self.n_sent_bytes_when_last_repair = current_sent_bytes;
         }
