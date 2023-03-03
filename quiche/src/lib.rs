@@ -384,7 +384,6 @@ extern crate log;
 
 use networkcoding::DecoderError;
 use networkcoding::EncoderError;
-use networkcoding::RepairSymbol;
 use networkcoding::SourceSymbolMetadata;
 #[cfg(feature = "qlog")]
 use qlog::events::connectivity::TransportOwner;
@@ -7362,16 +7361,18 @@ impl Connection {
 
             frame::Frame::Repair { repair_symbol } => {
                 self.repair_symbols_received_count += 1;
-                match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
-                    Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
-                    Err(err) => return Err(Error::from(err)),
-                    Ok((_, decoded_symbols)) => {
-                        for decoded_symbol in decoded_symbols {
-                            self.recov_count += 1;
-                            let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
-                            trace!("process decoded symbol {}", mdu64);
-                            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
-                            self.recovered_symbols_need_ack.push_item(mdu64);
+                if self.receive_fec {
+                    match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
+                        Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
+                        Err(err) => return Err(Error::from(err)),
+                        Ok((_, decoded_symbols)) => {
+                            for decoded_symbol in decoded_symbols {
+                                self.recov_count += 1;
+                                let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                                trace!("process decoded symbol {}", mdu64);
+                                self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                                self.recovered_symbols_need_ack.push_item(mdu64);
+                            }
                         }
                     }
                 }
@@ -7379,23 +7380,25 @@ impl Connection {
 
 
             frame::Frame::SourceSymbol { source_symbol } => {
-                let id = source_symbol_metadata_to_u64(source_symbol.metadata());
-                if self.fec_window_size as u64 <= id {
-                    self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_window_size as u64));
-                }
-                
-                match self.fec_decoder.receive_source_symbol(source_symbol) {
-                    Err(DecoderError::UnusedSourceSymbol) => {
-                        info!("received a source symbol unused by the decoder");
-                    },
-                    Err(err) => return Err(Error::from(err)),
-                    Ok(decoded_symbols) => {
-                        for decoded_symbol in decoded_symbols {
-                            self.recov_count += 1;
-                            let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
-                            trace!("process decoded symbol {}", mdu64);
-                            self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
-                            self.recovered_symbols_need_ack.push_item(mdu64);
+                if self.receive_fec {
+                    let id = source_symbol_metadata_to_u64(source_symbol.metadata());
+                    if self.fec_window_size as u64 <= id {
+                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_window_size as u64));
+                    }
+
+                    match self.fec_decoder.receive_source_symbol(source_symbol) {
+                        Err(DecoderError::UnusedSourceSymbol) => {
+                            info!("received a source symbol unused by the decoder");
+                        },
+                        Err(err) => return Err(Error::from(err)),
+                        Ok(decoded_symbols) => {
+                            for decoded_symbol in decoded_symbols {
+                                self.recov_count += 1;
+                                let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                                trace!("process decoded symbol {}", mdu64);
+                                self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                                self.recovered_symbols_need_ack.push_item(mdu64);
+                            }
                         }
                     }
                 }
