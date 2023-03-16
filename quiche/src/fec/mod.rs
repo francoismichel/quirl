@@ -2,4 +2,5 @@ pub mod fec_scheduler;
 mod background_fec_scheduler;
 mod burst_protecting_fec_scheduler;
 mod burst_protecting_fec_scheduler_with_fec_only;
+mod cooldown_fec_scheduler_with_fec_only;
 
