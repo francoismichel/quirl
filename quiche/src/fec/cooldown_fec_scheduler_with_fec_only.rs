@@ -96,7 +96,7 @@ impl CooldownFECSchedulerWithFECOnly {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_bytes_sent_when_nothing_to_send = conn.sent_bytes as usize;
         }
-        let should_send = should_probe || (enough_room_in_cwin && self.n_repair_in_flight as usize * symbol_size < max_repair_data);
+        let should_send = should_probe || (enough_room_in_cwin && self.state_sending_repair.is_some() && self.n_repair_in_flight as usize * symbol_size < max_repair_data);
         trace!("fec scheduler returns {}", should_send);
         should_send
     }
