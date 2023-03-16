@@ -5,10 +5,13 @@ use crate::fec::fec_scheduler::FECScheduler::BackgroundOnly;
 use crate::fec::fec_scheduler::FECScheduler::Bursty;
 use crate::fec::fec_scheduler::FECScheduler::NoRedundancy;
 use crate::fec::fec_scheduler::FECScheduler::BurstyOnFECOnly;
+use crate::fec::fec_scheduler::FECScheduler::CooldownOnFECOnly;
 use crate::fec::background_fec_scheduler::BackgroundFECScheduler;
 use crate::fec::burst_protecting_fec_scheduler::BurstsFECScheduler;
 use crate::fec::burst_protecting_fec_scheduler_with_fec_only::BurstsFECSchedulerWithFECOnly;
 use crate::path::Path;
+
+use super::cooldown_fec_scheduler_with_fec_only::CooldownFECSchedulerWithFECOnly;
 
 
 /// Available FEC redundancy schedulers.
@@ -26,6 +29,8 @@ pub enum FECSchedulerAlgorithm {
     BurstsOnly = 2,
     /// Same as above but sends REPAIR symbols only on a fec_only path.
     BurstsOnlyOnFECOnlyPath = 3,
+    /// Sends redundancy when enough bytes are in flight and after a certain cooldown
+    CooldownOnFECOnlyPath = 4,
 }
 
 impl FromStr for FECSchedulerAlgorithm {
@@ -40,6 +45,7 @@ impl FromStr for FECSchedulerAlgorithm {
             "background" => Ok(FECSchedulerAlgorithm::BackgroundOnly),
             "bursts" => Ok(FECSchedulerAlgorithm::BurstsOnly),
             "bursts_feconly" => Ok(FECSchedulerAlgorithm::BurstsOnlyOnFECOnlyPath),
+            "cooldown_feconly" => Ok(FECSchedulerAlgorithm::CooldownOnFECOnlyPath),
 
             _ => Err(crate::Error::FECScheduler),
         }
@@ -52,6 +58,7 @@ pub(crate) enum FECScheduler {
     BackgroundOnly(BackgroundFECScheduler),
     Bursty(BurstsFECScheduler),
     BurstyOnFECOnly(BurstsFECSchedulerWithFECOnly),
+    CooldownOnFECOnly(CooldownFECSchedulerWithFECOnly),
 }
 
 pub(crate) fn new_fec_scheduler(alg: FECSchedulerAlgorithm) -> FECScheduler {
@@ -60,6 +67,7 @@ pub(crate) fn new_fec_scheduler(alg: FECSchedulerAlgorithm) -> FECScheduler {
         FECSchedulerAlgorithm::BackgroundOnly => new_background_scheduler(),
         FECSchedulerAlgorithm::BurstsOnly => new_bursts_only_scheduler(),
         FECSchedulerAlgorithm::BurstsOnlyOnFECOnlyPath => new_bursts_only_on_fec_only_path_scheduler(),
+        FECSchedulerAlgorithm::CooldownOnFECOnlyPath => new_cooldown_on_fec_only_path_scheduler(),
     }
 }
 
@@ -75,6 +83,10 @@ fn new_bursts_only_on_fec_only_path_scheduler() -> FECScheduler {
     BurstyOnFECOnly(BurstsFECSchedulerWithFECOnly::new())
 }
 
+fn new_cooldown_on_fec_only_path_scheduler() -> FECScheduler {
+    CooldownOnFECOnly(CooldownFECSchedulerWithFECOnly::new())
+}
+
 impl FECScheduler {
 
     pub fn should_send_repair(&mut self, conn: &Connection, path: &Path, symbol_size: usize) -> bool {
@@ -82,6 +94,7 @@ impl FECScheduler {
             BackgroundOnly(scheduler) => scheduler.should_send_repair(conn, path, symbol_size),
             Bursty(scheduler) => scheduler.should_send_repair(conn, path, symbol_size),
             BurstyOnFECOnly(scheduler) => scheduler.should_send_repair(conn, path, symbol_size),
+            CooldownOnFECOnly(scheduler) => scheduler.should_send_repair(conn, path, symbol_size),
             NoRedundancy => false,
         }
     }
@@ -91,6 +104,7 @@ impl FECScheduler {
             BackgroundOnly(scheduler) => scheduler.sent_repair_symbol(),
             Bursty(scheduler) => scheduler.sent_repair_symbol(),
             BurstyOnFECOnly(scheduler) => scheduler.sent_repair_symbol(),
+            CooldownOnFECOnly(scheduler) => scheduler.sent_repair_symbol(),
             NoRedundancy => (),
         }
     }
@@ -100,6 +114,7 @@ impl FECScheduler {
             BackgroundOnly(scheduler) => scheduler.acked_repair_symbol(),
             Bursty(scheduler) => scheduler.acked_repair_symbol(),
             BurstyOnFECOnly(scheduler) => scheduler.acked_repair_symbol(),
+            CooldownOnFECOnly(scheduler) => scheduler.acked_repair_symbol(),
             NoRedundancy => (),
         }
     }
@@ -110,6 +125,7 @@ impl FECScheduler {
             BackgroundOnly(scheduler) => scheduler.sent_source_symbol(),
             Bursty(scheduler) => scheduler.sent_source_symbol(),
             BurstyOnFECOnly(scheduler) => scheduler.sent_source_symbol(),
+            CooldownOnFECOnly(scheduler) => scheduler.sent_source_symbol(),
             NoRedundancy => (),
         }
     }
@@ -119,6 +135,7 @@ impl FECScheduler {
             BackgroundOnly(scheduler) => scheduler.lost_repair_symbol(),
             Bursty(scheduler) => scheduler.lost_repair_symbol(),
             BurstyOnFECOnly(scheduler) => scheduler.lost_repair_symbol(),
+            CooldownOnFECOnly(scheduler) => scheduler.lost_repair_symbol(),
             NoRedundancy => (),
         }
     }
