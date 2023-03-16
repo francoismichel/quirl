@@ -4834,14 +4834,6 @@ impl Connection {
             }
         }
 
-        for frame in &mut frames {
-            trace!("{} tx frm {:?}", self.trace_id, frame);
-
-            qlog_with_type!(QLOG_PACKET_TX, self.qlog, _q, {
-                qlog_frames.push(frame.to_qlog());
-            });
-        }
-
         qlog_with_type!(QLOG_PACKET_TX, self.qlog, q, {
             if let Some(header) = qlog_pkt_hdr {
                 // Qlog packet raw info described at
