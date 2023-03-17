@@ -733,6 +733,18 @@ pub enum QlogLevel {
     Extra = 2,
 }
 
+/// Recovered symbol, indicating the time it was recovered and the
+/// time it was received from the network if it has been
+#[derive(Clone)]
+pub struct RecoveredSymbol {
+    /// The Instant when it was recovered using FEC
+    pub recovered_time: std::time::Instant,
+    /// The Instant when it was received from the network, or None
+    /// if it was never received from the network
+    pub received_time: Option<std::time::Instant>,
+}
+
+
 /// Stores configuration shared between multiple connections.
 pub struct Config {
     local_transport_params: TransportParams,
@@ -1524,6 +1536,8 @@ pub struct Connection {
     fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
     fec_window_size: usize,
     recovered_symbols_need_ack: ranges::RangeSet,
+    // for stats purpose, keep the metadata of the recovered source symbols
+    recovered_symbols_md_history: std::collections::HashMap<u64, RecoveredSymbol>,
 
 
     /// Whether to emit DATAGRAM frames in the next packet.
@@ -1982,6 +1996,7 @@ impl Connection {
             receive_fec: config.receive_fec,
             fec_window_size: config.fec_window_size,
             recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
+            recovered_symbols_md_history: std::collections::HashMap::new(),
         };
 
         // Don't support multipath with zero-length CIDs.
@@ -6944,6 +6959,7 @@ impl Connection {
             lost: self.lost_count,
             retrans: self.retrans_count,
             recov: self.recov_count,
+            recovered_and_received: self.recovered_symbols_md_history.clone(),
             repair_received: self.repair_symbols_received_count,
             repair_sent: self.repair_symbols_sent_count,
             sent_bytes: self.sent_bytes,
@@ -7853,6 +7869,7 @@ impl Connection {
                                 trace!("process decoded symbol {}", mdu64);
                                 self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
                                 self.recovered_symbols_need_ack.push_item(mdu64);
+                                self.recovered_symbols_md_history.insert(mdu64, RecoveredSymbol { recovered_time: now, received_time: None });
                             }
                         }
                     }
@@ -7879,6 +7896,9 @@ impl Connection {
                                 trace!("process decoded symbol {}", mdu64);
                                 self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
                                 self.recovered_symbols_need_ack.push_item(mdu64);
+                                if let Some(recovered_symbol) = self.recovered_symbols_md_history.get_mut(&mdu64) {
+                                    recovered_symbol.received_time = Some(now);
+                                }
                             }
                         }
                     }
@@ -8565,6 +8585,9 @@ pub struct Stats {
 
     /// The number of source symbols recovered using FEC
     pub recov: usize,
+
+    /// The both recovered and received symbols 
+    pub recovered_and_received: std::collections::HashMap<u64, RecoveredSymbol>,
 
     /// The number of repair symbols sent
     pub repair_sent: usize,
