@@ -7914,6 +7914,7 @@ impl Connection {
                                 trace!("process decoded symbol {}", mdu64);
                                 self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
                                 self.recovered_symbols_need_ack.push_item(mdu64);
+                                self.recovered_symbols_md_history.insert(mdu64, RecoveredSymbol { recovered_time: now, received_time: None });
                             }
                         }
                     }
