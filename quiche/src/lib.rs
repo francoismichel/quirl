@@ -7595,11 +7595,11 @@ impl Connection {
                                 trace!("process decoded symbol {}", mdu64);
                                 self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
                                 self.recovered_symbols_need_ack.push_item(mdu64);
-                                if let Some(recovered_symbol) = self.recovered_symbols_md_history.get_mut(&mdu64) {
-                                    recovered_symbol.received_time = Some(now);
-                                }
                             }
                         }
+                    }
+                    if let Some(recovered_symbol) = self.recovered_symbols_md_history.get_mut(&id) {
+                        recovered_symbol.received_time = Some(now);
                     }
                 }
             },
