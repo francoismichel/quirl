@@ -7595,6 +7595,10 @@ impl Connection {
                                 trace!("process decoded symbol {}", mdu64);
                                 self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
                                 self.recovered_symbols_need_ack.push_item(mdu64);
+                                // this event can happend if the repair symbols are received on a quicker path but are not enough
+                                // to recover the source symbols, then the source symbols will be recovered
+                                // upon the reception of the other source symbols of the set, on the slow path, just before the
+                                // normal reception of the lost source symbols
                                 self.recovered_symbols_md_history.insert(mdu64, RecoveredSymbol { recovered_time: now, received_time: None });
                             }
                         }
