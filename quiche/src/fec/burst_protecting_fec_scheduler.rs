@@ -62,10 +62,11 @@ impl BurstsFECScheduler {
         let should_probe = path.recovery.app_limited() && 8.0*(total_bif as f64)/path.recovery.rtt().as_secs_f64() < bandwidth_probing_bps as f64;
 
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={} should_probe={} 
-                current_sent_bytes={} old_sent_bytes={} sent_enough_protected_data={} enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}",
+                current_sent_bytes={} old_sent_bytes={} sent_enough_protected_data={} enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
+                elapsed_since_first_source_symbol={:?} fec_cooldown={:?}",
                 dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
                 should_probe, current_sent_bytes, self.n_bytes_sent_when_nothing_to_send, sent_enough_protected_data, enough_room_in_cwin,
-                cwin_available, minimum_room_in_cwin);
+                cwin_available, minimum_room_in_cwin, self.first_source_symbol_in_burst_sent_time.map(|t| t.elapsed()), fec_cooldown);
 
         
         self.state_sending_repair = match self.state_sending_repair {
