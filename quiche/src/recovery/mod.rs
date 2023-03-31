@@ -1236,6 +1236,10 @@ impl Recovery {
     pub fn send_quantum(&self) -> usize {
         self.send_quantum
     }
+
+    pub fn set_send_quantum(&mut self, v: usize) {
+        self.send_quantum = v;
+    }
 }
 
 /// Available congestion control algorithms.
