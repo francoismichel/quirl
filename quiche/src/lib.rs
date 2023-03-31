@@ -4993,6 +4993,19 @@ impl Connection {
             .map(|path| {path.fec_only = v} ).ok_or(Error::UnavailablePath)
     }
 
+
+    /// Sets the size of the send quantum, in bytes.
+    ///
+    /// This represents the maximum size of a packet burst as determined by the
+    /// congestion control algorithm in use.
+    ///
+    pub fn set_send_quantum_on_path(&mut self, local_addr: SocketAddr, peer_addr: SocketAddr, v: usize) -> Result<()> {
+        self.paths
+                    .path_id_from_addrs(&(local_addr, peer_addr))
+                    .and_then(|pid| self.paths.get_mut(pid).ok())
+                    .map(|path| path.recovery.set_send_quantum(v)).ok_or(Error::UnavailablePath)
+    }
+
     /// Returns the size of the send quantum, in bytes.
     ///
     /// This represents the maximum size of a packet burst as determined by the
