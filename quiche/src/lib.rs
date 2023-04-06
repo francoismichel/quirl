@@ -4167,6 +4167,11 @@ impl Connection {
                             } else {
                                 return Err(BufferTooShort);
                             }
+                            let first_md = self.fec_encoder.first_metadata();
+                            if let Some(first_md) = first_md {
+                                trace!("packet REPAIR frame protecting symbols [{}, {}]",
+                                        source_symbol_metadata_to_u64(first_md), source_symbol_metadata_to_u64(md));
+                            }
                         }
                         Err(EncoderError::NoSymbolToGenerate) => (),    // because generate_up_to may not be able to generate even if can_generate returned true
                         Err(err) => {
@@ -7368,6 +7373,7 @@ impl Connection {
             },
 
             frame::Frame::Repair { repair_symbol } => {
+                trace!("received repair symbol, current window bounds are {:?}", self.fec_decoder.bounds());
                 self.repair_symbols_received_count += 1;
                 if self.receive_fec {
                     match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
