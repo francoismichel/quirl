@@ -63,7 +63,7 @@ impl BurstsFECScheduler {
                 }
             }
             None => {
-                if nothing_to_send && sent_enough_protected_data && enough_room_in_cwin
+                if nothing_to_send && sent_enough_protected_data
                     && (self.first_source_symbol_in_burst_sent_time.is_none() || now > self.first_source_symbol_in_burst_sent_time.unwrap() + fec_cooldown) {
                     // a burst of packets has occurred, so send repair symbols
                     let bytes_to_protect = std::cmp::min(bif, current_sent_bytes - self.n_sent_bytes_when_last_repair);
@@ -83,7 +83,7 @@ impl BurstsFECScheduler {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_bytes_sent_when_nothing_to_send = conn.sent_bytes as usize;
         }
-        let should_send = should_probe || (enough_room_in_cwin && match self.state_sending_repair {
+        let should_send = should_probe || (match self.state_sending_repair {
             Some(state) => (self.n_repair_in_flight as usize * symbol_size) < state.max_sending_repair_bytes,
             None => false,
         });
