@@ -70,11 +70,11 @@ impl BurstsFECScheduler {
 
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
                 current_sent_bytes={} old_sent_bytes={} sent_enough_protected_data={} enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
-                elapsed_since_first_source_symbol={:?} fec_cooldown={:?}",
+                elapsed_since_first_source_symbol={:?} fec_cooldown={:?}, will_delay={:?}",
                 dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
                 current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, sent_enough_protected_data, enough_room_in_cwin,
-                cwin_available, minimum_room_in_cwin, self.first_source_symbol_in_burst_sent_time.map(|t| t.elapsed()), fec_cooldown);
-        
+                cwin_available, minimum_room_in_cwin, self.first_source_symbol_in_burst_sent_time.map(|t| t.elapsed()), fec_cooldown, self.delayed_sending.map(|inst| inst.duration_since(now)));
+    
         self.state_sending_repair = if nothing_to_send && sent_enough_protected_data && now >= self.delayed_sending.unwrap_or(now)
                                         && (self.first_source_symbol_in_burst_sent_time.is_none() 
                                             || now > self.first_source_symbol_in_burst_sent_time.unwrap() + fec_cooldown) {
