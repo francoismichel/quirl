@@ -13,7 +13,7 @@ pub(crate) struct BurstsFECScheduler {
     n_packets_sent_when_nothing_to_send: usize,
     n_sent_stream_bytes_sent_when_nothing_to_send: usize,
     n_sent_stream_bytes_when_last_repair: usize,
-    first_source_symbol_in_burst_sent_time: Option<std::time::Instant>,
+    earliest_unprotected_source_symbol_sent_time: Option<std::time::Instant>,
     n_source_symbols_sent_since_last_repair: usize,
     state_sending_repair: Option<SendingState>,
     delayed_sending: Option<std::time::Instant>,
@@ -26,7 +26,7 @@ impl BurstsFECScheduler {
             n_packets_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_when_last_repair: 0,
-            first_source_symbol_in_burst_sent_time: None,
+            earliest_unprotected_source_symbol_sent_time: None,
             n_source_symbols_sent_since_last_repair: 0,
             state_sending_repair: None,
             delayed_sending: None,
@@ -77,12 +77,12 @@ impl BurstsFECScheduler {
                 elapsed_since_first_source_symbol={:?} fec_cooldown={:?}, will_delay={:?}",
                 dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
                 should_probe, current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, sent_enough_protected_data, enough_room_in_cwin,
-                cwin_available, minimum_room_in_cwin, self.first_source_symbol_in_burst_sent_time.map(|t| t.elapsed()), fec_cooldown, self.delayed_sending.map(|inst| inst.duration_since(now)));
+                cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), fec_cooldown, self.delayed_sending.map(|inst| inst.duration_since(now)));
 
         
         self.state_sending_repair = if nothing_to_send && sent_enough_protected_data && now >= self.delayed_sending.unwrap_or(now)
-                                        && (self.first_source_symbol_in_burst_sent_time.is_none() 
-                                            || now > self.first_source_symbol_in_burst_sent_time.unwrap() + fec_cooldown) {
+                                       && (self.earliest_unprotected_source_symbol_sent_time.is_none() 
+                                           || now > self.earliest_unprotected_source_symbol_sent_time.unwrap() + fec_cooldown) {
             // a burst of packets has occurred, so send repair symbols
             let bytes_to_protect = std::cmp::min(total_bif, self.n_source_symbols_sent_since_last_repair*symbol_size);
             let max_repair_data = if bytes_to_protect < 15000 {
@@ -90,7 +90,13 @@ impl BurstsFECScheduler {
             } else {
                 bytes_to_protect/fec_frac_denominator_to_protect
             };
-            self.delayed_sending = Some(now + sending_delay);
+            let to_wait = if let Some(sent_time) = self.earliest_unprotected_source_symbol_sent_time {
+                let elapsed_since_sent = now.duration_since(sent_time);
+                now + sending_delay.saturating_sub(elapsed_since_sent)
+            } else {
+                now + sending_delay
+            };
+            self.delayed_sending = Some(to_wait);
             Some(SendingState{_start_time: now, repair_bytes_to_send: max_repair_data, repair_symbols_sent: 0})
         } else {
             None
@@ -113,7 +119,7 @@ impl BurstsFECScheduler {
 
     pub fn sent_repair_symbol(&mut self) {
         self.n_repair_in_flight += 1;
-        self.first_source_symbol_in_burst_sent_time = None;
+        self.earliest_unprotected_source_symbol_sent_time = None;
         self.n_source_symbols_sent_since_last_repair = 0;
         if let Some(state) = &mut self.state_sending_repair {
             state.repair_symbols_sent += 1;
@@ -125,8 +131,8 @@ impl BurstsFECScheduler {
     }
 
     pub fn sent_source_symbol(&mut self) {
-        if let None = self.first_source_symbol_in_burst_sent_time {
-            self.first_source_symbol_in_burst_sent_time = Some(std::time::Instant::now());
+        if let None = self.earliest_unprotected_source_symbol_sent_time {
+            self.earliest_unprotected_source_symbol_sent_time = Some(std::time::Instant::now());
         }
         self.n_source_symbols_sent_since_last_repair += 1;
     }
