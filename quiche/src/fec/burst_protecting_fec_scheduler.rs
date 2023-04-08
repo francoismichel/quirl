@@ -4,7 +4,7 @@ use std::env;
 
 #[derive(Debug, Clone, Copy)]
 struct SendingState {
-    _start_time: std::time::Instant,
+    start_time: std::time::Instant,
     repair_bytes_to_send: usize,
     repair_symbols_sent: usize, // number of repair symbols sent during this state
 }
@@ -97,9 +97,18 @@ impl BurstsFECScheduler {
                 now + sending_delay
             };
             self.delayed_sending = Some(to_wait);
-            Some(SendingState{_start_time: now, repair_bytes_to_send: max_repair_data, repair_symbols_sent: 0})
+            Some(SendingState{start_time: now, repair_bytes_to_send: max_repair_data, repair_symbols_sent: 0})
         } else {
-            None
+            // the state expires after 1 RTT
+            if let Some(state) = self.state_sending_repair {
+                if now.duration_since(state.start_time) >= path.recovery.rtt() {
+                    None
+                } else {
+                    self.state_sending_repair
+                }
+            } else {
+                None
+            }
         };
         if nothing_to_send {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
