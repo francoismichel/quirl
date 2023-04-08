@@ -86,13 +86,24 @@ impl BurstsFECScheduler {
             } else {
                 bytes_to_protect/fec_frac_denominator_to_protect
             };
-            let to_wait = if let Some(sent_time) = self.earliest_unprotected_source_symbol_sent_time {
-                let elapsed_since_sent = now.duration_since(sent_time);
-                now + sending_delay.saturating_sub(elapsed_since_sent)
-            } else {
-                now + sending_delay
+
+            // if there exists a previous state, reset the delaying deadline if it is an old state, otherwise keep the
+            // existing deadline if it exists 
+            self.delayed_sending = match self.state_sending_repair {
+                None => {
+                    Some(now + sending_delay)
+                },
+                Some(state) => {
+                    let state_expired = now.duration_since(state.start_time) >= path.recovery.rtt();
+                    if self.delayed_sending.is_none() || state_expired {
+                        Some(now + sending_delay)
+                    } else {
+                        // if there exists a state and the delay is not none, keep the same delay
+                        self.delayed_sending
+                    }
+                }
             };
-            self.delayed_sending = Some(to_wait);
+
             Some(SendingState{start_time: now, repair_bytes_to_send: max_repair_data, repair_symbols_sent: 0})
         } else {
             // the state expires after 1 RTT
@@ -126,6 +137,7 @@ impl BurstsFECScheduler {
         self.n_repair_in_flight += 1;
         self.earliest_unprotected_source_symbol_sent_time = None;
         self.n_source_symbols_sent_since_last_repair = 0;
+        self.delayed_sending = None;
         if let Some(state) = &mut self.state_sending_repair {
             state.repair_symbols_sent += 1;
         }
