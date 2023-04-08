@@ -80,7 +80,7 @@ impl BurstsFECScheduler {
                 cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), fec_cooldown, self.delayed_sending.map(|inst| inst.duration_since(now)));
 
         
-        self.state_sending_repair = if nothing_to_send && sent_enough_protected_data && now >= self.delayed_sending.unwrap_or(now)
+        self.state_sending_repair = if nothing_to_send && sent_enough_protected_data
                                        && (self.earliest_unprotected_source_symbol_sent_time.is_none() 
                                            || now > self.earliest_unprotected_source_symbol_sent_time.unwrap() + fec_cooldown) {
             // a burst of packets has occurred, so send repair symbols
@@ -127,7 +127,7 @@ impl BurstsFECScheduler {
         }
         let should_send = should_probe || (match self.state_sending_repair {
             Some(state) => {
-                (state.repair_symbols_sent * symbol_size) < state.repair_bytes_to_send
+                (state.repair_symbols_sent * symbol_size) < state.repair_bytes_to_send && now >= self.delayed_sending.unwrap_or(now)
             }
             None => false,
         });
