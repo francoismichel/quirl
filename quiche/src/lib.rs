@@ -808,9 +808,10 @@ impl Config {
 
             experimental_bbr_probertt_cwnd_gain: None,
 
-            fec_scheduler_algorithm: FECSchedulerAlgorithm::NoRedundancy,
-            emit_fec: false,
-            receive_fec: false,
+            // allow overriding these parameters from env vars to allow modifying applications from the outside
+            fec_scheduler_algorithm: std::env::var("CURL_OVERRIDE_QUICHE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
+            emit_fec:  std::env::var("CURL_OVERRIDE_QUICHE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
+            receive_fec: std::env::var("CURL_OVERRIDE_QUICHE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
             fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
 
             bw_probe_start_threshold_bps: 0.0,
