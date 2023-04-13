@@ -635,6 +635,11 @@ impl Error {
             Error::KeyUpdate => -19,
             Error::UnavailablePath => -20,
             Error::MultiPathViolation => -21,
+            Error::FECScheduler => -0xFEC1,
+            Error::FECEncoderError(_) => -0xFEC2,
+            Error::FECDecoderError(_) => -0xFEC3,
+            Error::BadSymbolID => -0xFEC4,
+            Error::SourceSymbolCreationError => -0xFEC5,
         }
     }
 }
