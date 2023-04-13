@@ -1849,6 +1849,9 @@ impl Connection {
             reset_token,
         );
 
+        let max_pkt_header_size = 1 + 20 + 4;
+        let max_crypto_overhead = 16;
+        
         let mut conn = Connection {
             version: config.version,
 
@@ -1982,8 +1985,8 @@ impl Connection {
 
             newly_acked: Vec::new(),
             
-            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(1280, 5000)),
-            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(1280, 5000)),
+            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, 5000)),
+            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, 5000)),
             fec_scheduler: Some(fec::fec_scheduler::new_fec_scheduler(config.fec_scheduler_algorithm)),
             latest_metadata_of_symbol_with_fec_protected_frames: None,
             recovered_symbols_md_history: std::collections::HashMap::new(),
