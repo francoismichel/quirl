@@ -626,6 +626,11 @@ impl Error {
             Error::IdLimit => -17,
             Error::OutOfIdentifiers => -18,
             Error::KeyUpdate => -19,
+            Error::FECScheduler => -0xFEC1,
+            Error::FECEncoderError(_) => -0xFEC2,
+            Error::FECDecoderError(_) => -0xFEC3,
+            Error::BadSymbolID => -0xFEC4,
+            Error::SourceSymbolCreationError => -0xFEC5,
         }
     }
 }
