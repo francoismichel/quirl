@@ -6157,7 +6157,13 @@ impl Connection {
                 .key_update
                 .as_ref()
                 .map(|key_update| key_update.timer);
-            let timers = [self.idle_timer, path_timer, key_update_timer];
+
+            let fec_scheduler_timer = match &self.fec_scheduler {
+                None => None,
+                Some(s) => s.timeout(),
+            };
+
+            let timers = [self.idle_timer, path_timer, key_update_timer, fec_scheduler_timer];
 
             timers.iter().filter_map(|&x| x).min()
         }
