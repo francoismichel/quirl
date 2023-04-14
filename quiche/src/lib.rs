@@ -856,9 +856,9 @@ impl Config {
             disable_dcid_reuse: false,
 
             // allow overriding these parameters from env vars to allow modifying applications from the outside
-            fec_scheduler_algorithm: std::env::var("CURL_OVERRIDE_QUICHE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
-            emit_fec:  std::env::var("CURL_OVERRIDE_QUICHE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
-            receive_fec: std::env::var("CURL_OVERRIDE_QUICHE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
+            fec_scheduler_algorithm: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
+            emit_fec:  std::env::var("QUICHE_FEC_OVERRIDE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
+            receive_fec: std::env::var("QUICHE_FEC_OVERRIDE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
             fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
             real_time: false,
         })
@@ -1871,7 +1871,7 @@ impl Connection {
 
         let max_pkt_header_size = 1 + 20 + 4;
         let max_crypto_overhead = 16;
-        
+
         let mut conn = Connection {
             version: config.version,
 
