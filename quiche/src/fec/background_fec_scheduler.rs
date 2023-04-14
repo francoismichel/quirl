@@ -17,11 +17,13 @@ impl BackgroundFECScheduler {
         let stream_to_emit = conn.streams.has_flushable();
         // send if no more data to send && we sent less repair than half the cwin
 
-        let cwnd = path.recovery.cwnd();
-        let max_repair_data = if cwnd < 15000 {
-            cwnd*4/5
+        let bif = path.recovery.cwnd() - path.recovery.cwnd_available();
+        let max_repair_data = if bif < symbol_size {
+            0
+        } else if bif < 15000 {
+            bif*4/5
         } else {
-            cwnd/2
+            bif/2
         };
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} max_repair_data={}",
                 dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, max_repair_data);
