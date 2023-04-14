@@ -152,5 +152,9 @@ impl BurstsFECScheduler {
         self.acked_repair_symbol()
     }
 
+    // returns an Instant at which the stack should wake up to sent new repair symbols
+    pub fn timeout(&self) -> Option<std::time::Instant> {
+        None
+    }
 
 }

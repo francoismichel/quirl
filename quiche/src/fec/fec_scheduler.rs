@@ -106,4 +106,13 @@ impl FECScheduler {
             NoRedundancy => (),
         }
     }
+
+    // returns an Instant at which the stack should wake up to sent new repair symbols
+    pub fn timeout(&self) -> Option<std::time::Instant> {
+        match self {
+            BackgroundOnly(scheduler) => scheduler.timeout(),
+            Bursty(scheduler) => scheduler.timeout(),
+            NoRedundancy => None,
+        }
+    }
 }
