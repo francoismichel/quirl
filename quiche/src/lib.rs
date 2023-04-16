@@ -841,8 +841,8 @@ impl Config {
             cc_algorithm: CongestionControlAlgorithm::CUBIC,
             initial_congestion_window_packets:
                 DEFAULT_INITIAL_CONGESTION_WINDOW_PACKETS,
-            hystart: true,
-            pacing: true,
+            hystart: std::env::var("QUICHE_FEC_OVERRIDE_HYSTART").unwrap_or_default().parse().unwrap_or(1) != 0,
+            pacing: std::env::var("QUICHE_FEC_OVERRIDE_PACING").unwrap_or_default().parse().unwrap_or(1) != 0,
             max_pacing_rate: None,
 
             dgram_recv_max_queue_len: DEFAULT_MAX_DGRAM_QUEUE_LEN,
