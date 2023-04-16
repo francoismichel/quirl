@@ -1333,6 +1333,8 @@ impl Config {
 
 /// A QUIC connection.
 pub struct Connection {
+    /// start time for the connection
+    start_time: std::time::Instant,
     /// QUIC wire version used for the connection.
     version: u32,
 
@@ -1853,6 +1855,7 @@ impl Connection {
         let max_crypto_overhead = 16;
 
         let mut conn = Connection {
+            start_time: std::time::Instant::now(),
             version: config.version,
 
             ids,
@@ -2377,6 +2380,7 @@ impl Connection {
     ) -> Result<usize> {
         let now = time::Instant::now();
 
+        trace!("recv_single at {:?}", now.duration_since(self.start_time));
         if buf.is_empty() {
             return Err(Error::Done);
         }
@@ -3428,6 +3432,9 @@ impl Connection {
         &mut self, out: &mut [u8], send_pid: usize, has_initial: bool,
         now: time::Instant,
     ) -> Result<(packet::Type, usize)> {
+        let now = time::Instant::now();
+
+        trace!("send_single at {:?}", now.duration_since(self.start_time));
         if out.is_empty() {
             return Err(Error::BufferTooShort);
         }
