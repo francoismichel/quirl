@@ -4,6 +4,7 @@ use crate::path::Path;
 const DEFAULT_DELAYING_DURATION: std::time::Duration = std::time::Duration::from_millis(2);
 
 pub struct BackgroundFECScheduler {
+    delaying_duration: std::time::Duration,
     n_repair_in_flight: u64,
     rs_triggering_time: Option<std::time::Instant>, // can be used to delay the sending of repair symbols (sometimes waiting allows escaping a burst loss event)
     rs_sent_for_this_round: bool,
@@ -12,6 +13,7 @@ pub struct BackgroundFECScheduler {
 impl BackgroundFECScheduler {
     pub fn new() -> BackgroundFECScheduler {
         BackgroundFECScheduler{
+            delaying_duration: DEFAULT_DELAYING_DURATION,
             n_repair_in_flight: 0,
             rs_triggering_time: None,
             rs_sent_for_this_round: false,
@@ -27,6 +29,9 @@ impl BackgroundFECScheduler {
         let now = std::time::Instant::now();
         let dgrams_to_emit = conn.dgram_max_writable_len().is_some();
         let stream_to_emit = conn.streams.has_flushable();
+        if let Ok(val) = std::env::var("DEBUG_QUICHE_FEC_BACKGROUND_DELAYING_DURATION_US") {
+            self.delaying_duration = std::time::Duration::from_micros(val.parse().unwrap_or(DEFAULT_DELAYING_DURATION.as_micros() as u64))
+        }
         // send if no more data to send && we sent less repair than half the cwin
 
         let bif = path.recovery.cwnd() - path.recovery.cwnd_available();
@@ -51,8 +56,8 @@ impl BackgroundFECScheduler {
                 self.rs_sent_for_this_round = false;
             }
             trace!("rs_triggering_time = {:?}, waiting remaining = {:?}", self.rs_triggering_time,
-                    self.rs_triggering_time.map(|t| (t + DEFAULT_DELAYING_DURATION).duration_since(now)));
-            let waited_enough = self.rs_triggering_time.is_some() && now >= self.rs_triggering_time.unwrap() + DEFAULT_DELAYING_DURATION;
+                    self.rs_triggering_time.map(|t| (t + self.delaying_duration).duration_since(now)));
+            let waited_enough = self.rs_triggering_time.is_some() && now >= self.rs_triggering_time.unwrap() + self.delaying_duration;
     
             repair_symbol_required && waited_enough
         }
@@ -83,7 +88,7 @@ impl BackgroundFECScheduler {
             None
         } else {
             if let Some(triggering_time) = self.rs_triggering_time {
-                Some(triggering_time + DEFAULT_DELAYING_DURATION)
+                Some(triggering_time + self.delaying_duration)
             } else {
                 None
             }
