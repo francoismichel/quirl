@@ -493,8 +493,11 @@ const MAX_PROBING_TIMEOUTS: usize = 3;
 // The default initial congestion window size in terms of packet count.
 const DEFAULT_INITIAL_CONGESTION_WINDOW_PACKETS: usize = 10;
 
-// the default FEC window size in terms of source symbols
-const DEFAULT_FEC_WINDOW_SIZE: usize = 500;
+// Window size for the FEC sender, in number of source symbols
+const DEFAULT_FEC_SEND_WINDOW_SIZE: usize = 5000;
+
+// Window size for the FEC receiver, in number of source symbols
+const DEFAULT_FEC_RECEIVE_WINDOW_SIZE: usize = 5000;
 /// A specialized [`Result`] type for quiche operations.
 ///
 /// This type is used throughout quiche's public API for any operation that
@@ -780,7 +783,8 @@ pub struct Config {
     fec_scheduler_algorithm: FECSchedulerAlgorithm,
     emit_fec: bool,
     receive_fec: bool,
-    fec_window_size: usize,
+    fec_receive_window_size: usize,
+    fec_send_window_size: usize,
 
     real_time: bool,
 }
@@ -850,7 +854,10 @@ impl Config {
             fec_scheduler_algorithm: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
             emit_fec:  std::env::var("QUICHE_FEC_OVERRIDE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
             receive_fec: std::env::var("QUICHE_FEC_OVERRIDE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
-            fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
+            
+            fec_receive_window_size: std::env::var("QUICHE_FEC_OVERRIDE_FEC_RECEIVE_WINDOW_SIZE").unwrap_or_default().parse().unwrap_or(DEFAULT_FEC_RECEIVE_WINDOW_SIZE),
+            fec_send_window_size: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SEND_WINDOW_SIZE").unwrap_or_default().parse().unwrap_or(DEFAULT_FEC_SEND_WINDOW_SIZE),
+
             real_time: false,
         })
     }
@@ -1308,9 +1315,16 @@ impl Config {
 
     /// Sets the FEC decoding window size.
     ///
-    /// The default value is `DEFAULT_FEC_WINDOW_SIZE`.
-    pub fn set_fec_window_size(&mut self, size: usize) {
-        self.fec_window_size = size;
+    /// The default value is `DEFAULT_FEC_RECEIVE_WINDOW_SIZE`.
+    pub fn set_fec_receive_window_size(&mut self, size: usize) {
+        self.fec_receive_window_size = size;
+    }
+    
+    /// Sets the FEC encoding window size.
+    ///
+    /// The default value is `DEFAULT_FEC_SEND_WINDOW_SIZE`.
+    pub fn set_fec_send_window_size(&mut self, size: usize) {
+        self.fec_send_window_size = size;
     }
 
     /// decides whether FEC should be sent to protect data
@@ -1532,7 +1546,8 @@ pub struct Connection {
     emit_fec: bool,
     receive_fec: bool,
     fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
-    fec_window_size: usize,
+    fec_receive_window_size: usize,
+    _fec_send_window_size: usize,
     recovered_symbols_need_ack: ranges::RangeSet,
     // for stats purpose, keep the metadata of the recovered source symbols
     recovered_symbols_md_history: std::collections::HashMap<u64, RecoveredSymbol>,
@@ -1988,8 +2003,9 @@ impl Connection {
 
             newly_acked: Vec::new(),
             
-            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, 5000)),
-            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, 5000)),
+            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, config.fec_send_window_size)),
+            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, config.fec_receive_window_size)),
+
             fec_scheduler: Some(fec::fec_scheduler::new_fec_scheduler(config.fec_scheduler_algorithm)),
             latest_metadata_of_symbol_with_fec_protected_frames: None,
             recovered_symbols_md_history: std::collections::HashMap::new(),
@@ -1997,7 +2013,8 @@ impl Connection {
 
             emit_fec: config.emit_fec,
             receive_fec: config.receive_fec,
-            fec_window_size: config.fec_window_size,
+            fec_receive_window_size: config.fec_receive_window_size,
+            _fec_send_window_size: config.fec_send_window_size,
             recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
         };
 
@@ -3051,7 +3068,7 @@ impl Connection {
 
                     frame::Frame::Repair { .. } => {
                         if let Some(scheduler) = &mut self.fec_scheduler {
-                            scheduler.acked_repair_symbol();
+                            scheduler.acked_repair_symbol(&self.fec_encoder);
                         }
                     },
 
@@ -3552,7 +3569,7 @@ impl Connection {
 
                             frame::Frame::Repair { .. } => {
                                 if let Some(scheduler) = &mut self.fec_scheduler {
-                                    scheduler.lost_repair_symbol();
+                                    scheduler.lost_repair_symbol(&self.fec_encoder);
                                 }
                             },
         
@@ -3562,7 +3579,7 @@ impl Connection {
                     recovery::LostFrame::LostAndRecovered(frame) => {
                         if let frame::Frame::Repair { .. } = frame {
                             if let Some(scheduler) = &mut self.fec_scheduler {
-                                scheduler.lost_repair_symbol();
+                                scheduler.lost_repair_symbol(&self.fec_encoder);
                             }
                         }
                     }
@@ -3578,6 +3595,8 @@ impl Connection {
         let pkt_space = &mut self.pkt_num_spaces[epoch];
 
         let mut left = b.cap();
+
+        let space_reduction_due_to_cwnd = b.cap() - left;
 
         let pn = pkt_space.next_pkt_num;
         let pn_len = packet::pkt_num_len(pn)?;
@@ -4177,7 +4196,7 @@ impl Connection {
                             };
                             if push_frame_to_pkt!(b, frames, frame, left) {
                                 in_flight = true;
-                                self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
+                                self.fec_scheduler.as_mut().unwrap().sent_repair_symbol(&self.fec_encoder);
                                 ack_eliciting = true;
                                 self.repair_symbols_sent_count += 1;
                             } else {
@@ -4210,7 +4229,7 @@ impl Connection {
                     in_flight = true;
                     fec_protected = true;
                     if let Some(fec_scheduler) = &mut self.fec_scheduler {
-                        fec_scheduler.sent_source_symbol();
+                        fec_scheduler.sent_source_symbol(&self.fec_encoder);
                     }
                 } else {
                     error!("buffer too short when adding ID frame");
@@ -4683,6 +4702,18 @@ impl Connection {
         }
 
         Ok((pkt_type, written))
+    }
+
+    /// Sets the size of the send quantum, in bytes.
+    ///
+    /// This represents the maximum size of a packet burst as determined by the
+    /// congestion control algorithm in use.
+    ///
+    pub fn set_send_quantum_on_path(&mut self, local_addr: SocketAddr, peer_addr: SocketAddr, v: usize) -> Result<()> {
+        self.paths
+                    .path_id_from_addrs(&(local_addr, peer_addr))
+                    .and_then(|pid| self.paths.get_mut(pid).ok())
+                    .map(|path| path.recovery.set_send_quantum(v)).ok_or(Error::InvalidState)
     }
 
     /// Returns the size of the send quantum, in bytes.
@@ -7418,11 +7449,12 @@ impl Connection {
             frame::Frame::SourceSymbol { source_symbol } => {
                 if self.receive_fec {
                     let id = source_symbol_metadata_to_u64(source_symbol.metadata());
-                    if self.fec_window_size as u64 <= id {
-                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_window_size as u64));
+                    if self.fec_receive_window_size as u64 <= id {
+                        let path = self.paths.get_active()?;
+                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_receive_window_size as u64), Some(now - path.recovery.pto()));
                     }
 
-                    match self.fec_decoder.receive_source_symbol(source_symbol) {
+                    match self.fec_decoder.receive_source_symbol(source_symbol, now) {
                         Err(DecoderError::UnusedSourceSymbol) => {
                             info!("received a source symbol unused by the decoder");
                         },

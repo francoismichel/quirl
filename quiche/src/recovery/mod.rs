@@ -1141,7 +1141,7 @@ impl Recovery {
                     None => {
                         self.smoothed_lost_packets_per_epoch = Some(self.current_loss_epoch_lost_packets_count as f64);
 
-                        self.var_lost_packets_per_epoch = self.current_loss_epoch_lost_packets_count as f64 / 2.0;
+                        self.var_lost_packets_per_epoch = 1.0;
                     },
 
                     Some(slostpackets) => {
@@ -1246,6 +1246,10 @@ impl Recovery {
 
     pub fn send_quantum(&self) -> usize {
         self.send_quantum
+    }
+
+    pub fn set_send_quantum(&mut self, v: usize) {
+        self.send_quantum = v;
     }
 }
 

@@ -1,5 +1,7 @@
 use core::str::FromStr;
 
+use networkcoding::Encoder;
+
 use crate::Connection;
 use crate::fec::fec_scheduler::FECScheduler::BackgroundOnly;
 use crate::fec::fec_scheduler::FECScheduler::Bursty;
@@ -74,35 +76,35 @@ impl FECScheduler {
         }
     }
 
-    pub fn sent_repair_symbol(&mut self) {
+    pub fn sent_repair_symbol(&mut self, encoder: &Encoder) {
         match self {
-            BackgroundOnly(scheduler) => scheduler.sent_repair_symbol(),
-            Bursty(scheduler) => scheduler.sent_repair_symbol(),
+            BackgroundOnly(scheduler) => scheduler.sent_repair_symbol(encoder),
+            Bursty(scheduler) => scheduler.sent_repair_symbol(encoder),
             NoRedundancy => (),
         }
     }
 
-    pub fn acked_repair_symbol(&mut self) {
+    pub fn acked_repair_symbol(&mut self, encoder: &Encoder) {
         match self {
-            BackgroundOnly(scheduler) => scheduler.acked_repair_symbol(),
-            Bursty(scheduler) => scheduler.acked_repair_symbol(),
+            BackgroundOnly(scheduler) => scheduler.acked_repair_symbol(encoder),
+            Bursty(scheduler) => scheduler.acked_repair_symbol(encoder),
             NoRedundancy => (),
         }
     }
 
 
-    pub fn sent_source_symbol(&mut self) {
+    pub fn sent_source_symbol(&mut self, encoder: &Encoder) {
         match self {
-            BackgroundOnly(scheduler) => scheduler.sent_source_symbol(),
-            Bursty(scheduler) => scheduler.sent_source_symbol(),
+            BackgroundOnly(scheduler) => scheduler.sent_source_symbol(encoder),
+            Bursty(scheduler) => scheduler.sent_source_symbol(encoder),
             NoRedundancy => (),
         }
     }
 
-    pub fn lost_repair_symbol(&mut self) {
+    pub fn lost_repair_symbol(&mut self, encoder: &Encoder) {
         match self {
-            BackgroundOnly(scheduler) => scheduler.lost_repair_symbol(),
-            Bursty(scheduler) => scheduler.lost_repair_symbol(),
+            BackgroundOnly(scheduler) => scheduler.lost_repair_symbol(encoder),
+            Bursty(scheduler) => scheduler.lost_repair_symbol(encoder),
             NoRedundancy => (),
         }
     }
