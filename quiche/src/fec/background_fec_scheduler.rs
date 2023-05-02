@@ -40,7 +40,13 @@ impl BackgroundFECScheduler {
         } else if bif < 15000 {
             bif*4/5
         } else {
-            bif/2
+            match path.recovery.packets_lost_per_round_trip() {
+                None => bif/2,
+                Some(packets_lost_per_round_trip) => {
+                    // if we have loss estimations, send avg_lost_packets_per_roundtrip + 4 * variation
+                    std::cmp::min((packets_lost_per_round_trip + 4.0 * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize, bif/2)
+                }
+            }
         };
         
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} max_repair_data={}",
