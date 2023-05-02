@@ -801,6 +801,18 @@ impl Recovery {
         self.rtt_stats.rttvar
     }
 
+    pub fn packets_lost_per_round_trip(&self) -> Option<f64> {
+        self.smoothed_lost_packets_per_epoch
+    }
+
+    pub fn var_packets_lost_per_round_trip(&self) -> f64 {
+        self.var_lost_packets_per_epoch
+    }
+
+    pub fn max_packets_lost_per_epoch(&self) -> Option<usize> {
+        self.max_lost_packets_per_epoch
+    }
+
     pub fn pto(&self) -> Duration {
         self.rtt() + cmp::max(self.rtt_stats.rttvar * 4, GRANULARITY)
     }
@@ -947,6 +959,18 @@ impl Recovery {
             trace_id,
             epoch,
         );
+
+        if loss.lost_packets > 0 {
+            match self.congestion.current_loss_epoch_start_time {
+                None => {
+                    self.congestion.current_loss_epoch_start_time = Some(now);
+                    self.congestion.current_loss_epoch_lost_packets_count = loss.lost_packets;
+                }
+                Some(_) => {
+                    self.congestion.current_loss_epoch_lost_packets_count += lost_packets;
+                }
+            }
+        }
 
         if let Some(pkt) = loss.largest_lost_pkt {
             if !self.congestion.in_congestion_recovery(pkt.time_sent) {

@@ -78,6 +78,12 @@ pub struct Congestion {
     /// Initial congestion window size in terms of packet count.
     pub(crate) initial_congestion_window_packets: usize,
 
+    pub(crate) current_loss_epoch_start_time: Option<std::time::Instant>,
+    pub(crate) current_loss_epoch_lost_packets_count: usize,
+    pub(crate) max_lost_packets_per_epoch: Option<usize>,
+    pub(crate) smoothed_lost_packets_per_epoch: Option<f64>,
+    pub(crate) var_lost_packets_per_epoch: f64,
+
     max_datagram_size: usize,
 
     pub(crate) lost_count: usize,
@@ -113,6 +119,12 @@ impl Congestion {
             max_datagram_size: recovery_config.max_send_udp_payload_size,
 
             send_quantum: initial_congestion_window,
+            
+            current_loss_epoch_start_time: None,
+            current_loss_epoch_lost_packets_count: 0,
+            max_lost_packets_per_epoch: None,
+            smoothed_lost_packets_per_epoch: None,
+            var_lost_packets_per_epoch: 0.0,
 
             delivery_rate: delivery_rate::Rate::default(),
 
@@ -218,6 +230,37 @@ impl Congestion {
 
         // Fill in a rate sample.
         self.delivery_rate.generate_rate_sample(*rtt_stats.min_rtt);
+
+
+        // compute loss statistics
+        if let Some(start_time) = self.current_loss_epoch_start_time {
+            if now.duration_since(start_time) > self.rtt() {
+                // record the loss epoch
+                self.current_loss_epoch_start_time = None;
+
+                match self.smoothed_lost_packets_per_epoch {
+                    // First loss rate sample.
+                    None => {
+                        self.smoothed_lost_packets_per_epoch = Some(self.current_loss_epoch_lost_packets_count as f64);
+
+                        self.var_lost_packets_per_epoch = self.current_loss_epoch_lost_packets_count as f64 / 2.0;
+                    },
+
+                    Some(slostpackets) => {
+                        self.var_lost_packets_per_epoch = self.var_lost_packets_per_epoch * 3.0 / 4.0 +
+                            (slostpackets - self.current_loss_epoch_lost_packets_count as f64).abs() * (1.0 / 4.0);
+
+                        self.smoothed_lost_packets_per_epoch = Some(
+                            slostpackets * (7.0 / 8.0) + self.current_loss_epoch_lost_packets_count as f64 * (1.0 / 8.0),
+                        );
+                    },
+                }
+
+                self.max_lost_packets_per_epoch = Some(self.max_lost_packets_per_epoch.unwrap_or(0).max(self.current_loss_epoch_lost_packets_count));
+                self.current_loss_epoch_start_time = None;
+                self.current_loss_epoch_lost_packets_count = 0;
+            }
+        }
 
         // Call congestion control hooks.
         (self.cc_ops.on_packets_acked)(
