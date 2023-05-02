@@ -802,15 +802,15 @@ impl Recovery {
     }
 
     pub fn packets_lost_per_round_trip(&self) -> Option<f64> {
-        self.smoothed_lost_packets_per_epoch
+        self.congestion.smoothed_lost_packets_per_epoch
     }
 
     pub fn var_packets_lost_per_round_trip(&self) -> f64 {
-        self.var_lost_packets_per_epoch
+        self.congestion.var_lost_packets_per_epoch
     }
 
     pub fn max_packets_lost_per_epoch(&self) -> Option<usize> {
-        self.max_lost_packets_per_epoch
+        self.congestion.max_lost_packets_per_epoch
     }
 
     pub fn pto(&self) -> Duration {
@@ -967,7 +967,7 @@ impl Recovery {
                     self.congestion.current_loss_epoch_lost_packets_count = loss.lost_packets;
                 }
                 Some(_) => {
-                    self.congestion.current_loss_epoch_lost_packets_count += lost_packets;
+                    self.congestion.current_loss_epoch_lost_packets_count += loss.lost_packets;
                 }
             }
         }
@@ -1033,6 +1033,10 @@ impl Recovery {
 
     pub fn send_quantum(&self) -> usize {
         self.congestion.send_quantum()
+    }
+
+    pub fn set_send_quantum(&mut self, v: usize) {
+        self.congestion.set_send_quantum(v);
     }
 
     pub fn lost_count(&self) -> usize {

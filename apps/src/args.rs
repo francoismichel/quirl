@@ -475,6 +475,7 @@ Options:
   --disable-pacing            Disable pacing (linux only).
   --initial-cwnd-packets PACKETS      The initial congestion window size in terms of packet count [default: 10].
   --send-fec               Sends FEC to protect the STREAM and DATAGRAM frames
+  --receive-fec            Processes FEC data to protect the received STREAM and DATAGRAM frames
   -h --help                   Show this screen.
 ";
 

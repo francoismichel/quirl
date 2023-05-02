@@ -169,6 +169,11 @@ impl Congestion {
         self.send_quantum
     }
 
+
+    pub fn set_send_quantum(&mut self, v: usize) {
+        self.send_quantum = v;
+    }
+
     pub(crate) fn set_pacing_rate(&mut self, rate: u64, now: Instant) {
         self.pacer.update(self.send_quantum, rate, now);
     }
@@ -234,7 +239,7 @@ impl Congestion {
 
         // compute loss statistics
         if let Some(start_time) = self.current_loss_epoch_start_time {
-            if now.duration_since(start_time) > self.rtt() {
+            if now.duration_since(start_time) > rtt_stats.rtt() {
                 // record the loss epoch
                 self.current_loss_epoch_start_time = None;
 
@@ -243,7 +248,7 @@ impl Congestion {
                     None => {
                         self.smoothed_lost_packets_per_epoch = Some(self.current_loss_epoch_lost_packets_count as f64);
 
-                        self.var_lost_packets_per_epoch = self.current_loss_epoch_lost_packets_count as f64 / 2.0;
+                        self.var_lost_packets_per_epoch = 1.0;
                     },
 
                     Some(slostpackets) => {
