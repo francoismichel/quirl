@@ -195,6 +195,11 @@ pub struct Recovery {
 
     /// Initial congestion window size in terms of packet count.
     initial_congestion_window_packets: usize,
+    current_loss_epoch_start_time: Option<std::time::Instant>,
+    current_loss_epoch_lost_packets_count: usize,
+    max_lost_packets_per_epoch: Option<usize>,
+    smoothed_lost_packets_per_epoch: Option<f64>,
+    var_lost_packets_per_epoch: f64,
 }
 
 pub struct RecoveryConfig {
@@ -331,6 +336,11 @@ impl Recovery {
 
             initial_congestion_window_packets: recovery_config
                 .initial_congestion_window_packets,
+            current_loss_epoch_start_time: None,
+            current_loss_epoch_lost_packets_count: 0,
+            max_lost_packets_per_epoch: None,
+            smoothed_lost_packets_per_epoch: None,
+            var_lost_packets_per_epoch: 0.0,
         }
     }
 
@@ -822,6 +832,18 @@ impl Recovery {
         self.rttvar
     }
 
+    pub fn packets_lost_per_round_trip(&self) -> Option<f64> {
+        self.smoothed_lost_packets_per_epoch
+    }
+
+    pub fn var_packets_lost_per_round_trip(&self) -> f64 {
+        self.var_lost_packets_per_epoch
+    }
+
+    pub fn max_packets_lost_per_epoch(&self) -> Option<usize> {
+        self.max_lost_packets_per_epoch
+    }
+
     pub fn pto(&self) -> Duration {
         self.rtt() + cmp::max(self.rttvar * 4, GRANULARITY)
     }
@@ -1111,6 +1133,16 @@ impl Recovery {
                     );
                 }
 
+                match self.current_loss_epoch_start_time {
+                    None => {
+                        self.current_loss_epoch_start_time = Some(now);
+                        self.current_loss_epoch_lost_packets_count = 1;
+                    }
+                    Some(_) => {
+                        self.current_loss_epoch_lost_packets_count += 1;
+                    }
+                }
+                
                 lost_packets += 1;
                 self.lost_count += 1;
             } else {
@@ -1178,6 +1210,36 @@ impl Recovery {
 
         // Fill in a rate sample.
         self.delivery_rate.generate_rate_sample(self.min_rtt);
+
+        // compute loss statistics
+        if let Some(start_time) = self.current_loss_epoch_start_time {
+            if now.duration_since(start_time) > self.rtt() {
+                // record the loss epoch
+                self.current_loss_epoch_start_time = None;
+
+                match self.smoothed_lost_packets_per_epoch {
+                    // First loss rate sample.
+                    None => {
+                        self.smoothed_lost_packets_per_epoch = Some(self.current_loss_epoch_lost_packets_count as f64);
+
+                        self.var_lost_packets_per_epoch = self.current_loss_epoch_lost_packets_count as f64 / 2.0;
+                    },
+
+                    Some(slostpackets) => {
+                        self.var_lost_packets_per_epoch = self.var_lost_packets_per_epoch * 3.0 / 4.0 +
+                            (slostpackets - self.current_loss_epoch_lost_packets_count as f64).abs() * (1.0 / 4.0);
+
+                        self.smoothed_lost_packets_per_epoch = Some(
+                            slostpackets * (7.0 / 8.0) + self.current_loss_epoch_lost_packets_count as f64 * (1.0 / 8.0),
+                        );
+                    },
+                }
+
+                self.max_lost_packets_per_epoch = Some(self.max_lost_packets_per_epoch.unwrap_or(0).max(self.current_loss_epoch_lost_packets_count));
+                self.current_loss_epoch_start_time = None;
+                self.current_loss_epoch_lost_packets_count = 0;
+            }
+        }
 
         // Call congestion control hooks.
         (self.cc_ops.on_packets_acked)(self, acked, epoch, now);
