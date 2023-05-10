@@ -2,6 +2,7 @@ use crate::Connection;
 use crate::path::Path;
 
 const DEFAULT_DELAYING_DURATION: std::time::Duration = std::time::Duration::from_millis(2);
+const REPAIR_TO_SEND_WITH_NO_LOSS_INFO: usize = 5;  // allows to handle until 5 lost packets in a round trip with no loss estimation
 
 pub struct BackgroundFECScheduler {
     delaying_duration: std::time::Duration,
@@ -39,10 +40,12 @@ impl BackgroundFECScheduler {
         let max_repair_data = if bif < symbol_size {
             0
         } else if bif < 15000 {
-            bif*4/5
+            bif*3/5
         } else {
             match path.recovery.packets_lost_per_round_trip() {
-                None => bif/2,
+                None => {
+                    std::cmp::min(REPAIR_TO_SEND_WITH_NO_LOSS_INFO * symbol_size, bif/4)
+                }
                 Some(packets_lost_per_round_trip) => {
                     // if we have loss estimations, send avg_lost_packets_per_roundtrip + 4 * variation
                     std::cmp::min((packets_lost_per_round_trip + 4.0 * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , bif/2)
