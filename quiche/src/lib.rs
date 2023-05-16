@@ -487,7 +487,11 @@ const CONNECTION_WINDOW_FACTOR: f64 = 1.5;
 // validation as failed.
 const MAX_PROBING_TIMEOUTS: usize = 3;
 
-const DEFAULT_FEC_WINDOW_SIZE: usize = 500;
+// Window size for the FEC sender, in number of source symbols
+const DEFAULT_FEC_SEND_WINDOW_SIZE: usize = 5000;
+
+// Window size for the FEC receiver, in number of source symbols
+const DEFAULT_FEC_RECEIVE_WINDOW_SIZE: usize = 5000;
 /// A specialized [`Result`] type for quiche operations.
 ///
 /// This type is used throughout quiche's public API for any operation that
@@ -784,7 +788,8 @@ pub struct Config {
     fec_scheduler_algorithm: FECSchedulerAlgorithm,
     emit_fec: bool,
     receive_fec: bool,
-    fec_window_size: usize,
+    fec_receive_window_size: usize,
+    fec_send_window_size: usize,
     real_time: bool,
 
 }
@@ -850,10 +855,11 @@ impl Config {
             experimental_bbr_probertt_cwnd_gain: None,
 
             // allow overriding these parameters from env vars to allow modifying applications from the outside
-            fec_scheduler_algorithm: std::env::var("CURL_OVERRIDE_QUICHE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
-            emit_fec:  std::env::var("CURL_OVERRIDE_QUICHE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
-            receive_fec: std::env::var("CURL_OVERRIDE_QUICHE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
-            fec_window_size: DEFAULT_FEC_WINDOW_SIZE,
+            fec_scheduler_algorithm: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
+            emit_fec:  std::env::var("QUICHE_FEC_OVERRIDE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
+            receive_fec: std::env::var("QUICHE_FEC_OVERRIDE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
+            fec_receive_window_size: DEFAULT_FEC_RECEIVE_WINDOW_SIZE,
+            fec_send_window_size: DEFAULT_FEC_SEND_WINDOW_SIZE,
 
             real_time: false,
         })
@@ -1319,9 +1325,16 @@ impl Config {
 
     /// Sets the FEC decoding window size.
     ///
-    /// The default value is `DEFAULT_FEC_WINDOW_SIZE`.
-    pub fn set_fec_window_size(&mut self, size: usize) {
-        self.fec_window_size = size;
+    /// The default value is `DEFAULT_FEC_RECEIVE_WINDOW_SIZE`.
+    pub fn set_fec_receive_window_size(&mut self, size: usize) {
+        self.fec_receive_window_size = size;
+    }
+    
+    /// Sets the FEC encoding window size.
+    ///
+    /// The default value is `DEFAULT_FEC_SEND_WINDOW_SIZE`.
+    pub fn set_fec_send_window_size(&mut self, size: usize) {
+        self.fec_send_window_size = size;
     }
 
     /// decides whether FEC should be sent to protect data
@@ -1540,7 +1553,8 @@ pub struct Connection {
     emit_fec: bool,
     receive_fec: bool,
     fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
-    fec_window_size: usize,
+    fec_receive_window_size: usize,
+    _fec_send_window_size: usize,
     recovered_symbols_need_ack: ranges::RangeSet,
     // for stats purpose, keep the metadata of the recovered source symbols
     recovered_symbols_md_history: std::collections::HashMap<u64, RecoveredSymbol>,
@@ -2003,7 +2017,8 @@ impl Connection {
             latest_metadata_of_symbol_with_fec_protected_frames: None,
             emit_fec: config.emit_fec,
             receive_fec: config.receive_fec,
-            fec_window_size: config.fec_window_size,
+            fec_receive_window_size: config.fec_receive_window_size,
+            _fec_send_window_size: config.fec_send_window_size,
             recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
             recovered_symbols_md_history: std::collections::HashMap::new(),
         };
@@ -7908,8 +7923,8 @@ impl Connection {
             frame::Frame::SourceSymbol { source_symbol } => {
                 if self.receive_fec {
                     let id = source_symbol_metadata_to_u64(source_symbol.metadata());
-                    if self.fec_window_size as u64 <= id {
-                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_window_size as u64));
+                    if self.fec_receive_window_size as u64 <= id {
+                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_receive_window_size as u64));
                     }
 
                     match self.fec_decoder.receive_source_symbol(source_symbol) {
