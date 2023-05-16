@@ -854,9 +854,9 @@ impl Config {
             fec_scheduler_algorithm: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
             emit_fec:  std::env::var("QUICHE_FEC_OVERRIDE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
             receive_fec: std::env::var("QUICHE_FEC_OVERRIDE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
-
-            fec_receive_window_size: DEFAULT_FEC_RECEIVE_WINDOW_SIZE,
-            fec_send_window_size: DEFAULT_FEC_SEND_WINDOW_SIZE,
+            
+            fec_receive_window_size: std::env::var("QUICHE_FEC_OVERRIDE_FEC_RECEIVE_WINDOW_SIZE").unwrap_or_default().parse().unwrap_or(DEFAULT_FEC_RECEIVE_WINDOW_SIZE),
+            fec_send_window_size: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SEND_WINDOW_SIZE").unwrap_or_default().parse().unwrap_or(DEFAULT_FEC_SEND_WINDOW_SIZE),
 
             real_time: false,
         })
