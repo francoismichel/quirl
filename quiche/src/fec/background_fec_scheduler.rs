@@ -53,8 +53,8 @@ impl BackgroundFECScheduler {
             }
         };
         
-        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} max_repair_data={}",
-                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, max_repair_data);
+        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} max_repair_data={} packets_lost_per_round_trip={:?} variance={}",
+                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, max_repair_data, path.recovery.packets_lost_per_round_trip(), path.recovery.var_packets_lost_per_round_trip());
         let repair_symbol_required = !dgrams_to_emit && !stream_to_emit && (self.n_repair_in_flight as usize * symbol_size) < max_repair_data;
         if !repair_symbol_required {
             self.reset_rs_delaying();
