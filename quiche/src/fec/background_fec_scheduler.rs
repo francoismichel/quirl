@@ -48,7 +48,7 @@ impl BackgroundFECScheduler {
                 }
                 Some(packets_lost_per_round_trip) => {
                     // if we have loss estimations, send avg_lost_packets_per_roundtrip + 4 * variation
-                    std::cmp::min((packets_lost_per_round_trip + 2.0 * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , bif/2)
+                    std::cmp::min((packets_lost_per_round_trip + 2.0 * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , bif/3)
                 }
             }
         };
