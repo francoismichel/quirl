@@ -7946,10 +7946,11 @@ impl Connection {
                 if self.receive_fec {
                     let id = source_symbol_metadata_to_u64(source_symbol.metadata());
                     if self.fec_receive_window_size as u64 <= id {
-                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_receive_window_size as u64));
+                        let path = self.paths.get_active()?;
+                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_receive_window_size as u64), Some(now - path.recovery.pto()));
                     }
 
-                    match self.fec_decoder.receive_source_symbol(source_symbol) {
+                    match self.fec_decoder.receive_source_symbol(source_symbol, now) {
                         Err(DecoderError::UnusedSourceSymbol) => {
                             info!("received a source symbol unused by the decoder");
                         },
