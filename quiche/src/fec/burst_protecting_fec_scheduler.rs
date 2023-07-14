@@ -121,12 +121,12 @@ impl BurstsFECScheduler {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_sent_stream_bytes_sent_when_nothing_to_send = conn.tx_data as usize;
         }
-        let should_send = (match self.state_sending_repair {
+        let should_send = match self.state_sending_repair {
             Some(state) => {
                 (state.repair_symbols_sent * symbol_size) < state.repair_bytes_to_send && now >= self.delayed_sending.unwrap_or(now)
             }
             None => false,
-        });
+        };
         if should_send {
             self.n_sent_stream_bytes_when_last_repair = current_sent_stream_bytes;
         }
