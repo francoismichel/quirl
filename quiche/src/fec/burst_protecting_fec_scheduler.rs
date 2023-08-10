@@ -40,10 +40,8 @@ impl BurstsFECScheduler {
         const DEFAULT_COOLDOWN_US: u64 = 0;
         const DEFAULT_FRAC_DENOMINATOR_TO_PROTECT: usize = 2;
         const DEFAULT_MINIMUM_ROOM_IN_CWIN: usize = 5000;
-        const DEFAULT_BANDWIDTH_PROBING_BPS: usize = 0;
         const DEFAULT_SENDING_DELAY_US: u64 = 0;           // the delay value in microseconds
         let threshold_burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
-
         let fec_cooldown_us: u64 = env::var("DEBUG_QUICHE_FEC_COOLDOWN_US").unwrap_or(DEFAULT_COOLDOWN_US.to_string()).parse().unwrap_or(DEFAULT_COOLDOWN_US);
         let fec_cooldown = std::time::Duration::from_micros(fec_cooldown_us);
         let fec_frac_denominator_to_protect: usize = env::var("DEBUG_QUICHE_DEFAULT_FRAC_DENOMINATOR_TO_PROTECT").unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT.to_string()).parse().unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT);
@@ -58,17 +56,20 @@ impl BurstsFECScheduler {
 
         let cwnd = path.recovery.cwnd();
         let bif = cwnd.saturating_sub(path.recovery.cwnd_available());
-        let enough_room_in_cwin = path.recovery.cwnd_available() > minimum_room_in_cwin;
+        let cwin_available = path.recovery.cwnd_available();
+        let enough_room_in_cwin = cwin_available > minimum_room_in_cwin;
         let nothing_to_send = !dgrams_to_emit && !stream_to_emit;
         let current_sent_count = conn.sent_count;
         let current_sent_stream_bytes = conn.tx_data as usize;
         let current_burst_size = current_sent_stream_bytes - self.n_sent_stream_bytes_sent_when_nothing_to_send;
         let sent_enough_protected_data = current_burst_size > threshold_burst_size;
-        // we should probe using FEC if we are app-limited and the currently sent bitrate is not matching the bandwidth objective
 
-        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}",
-                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send);
-
+        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
+                current_sent_bytes={} old_sent_bytes={} sent_enough_protected_data={} enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
+                elapsed_since_first_source_symbol={:?} fec_cooldown={:?}, will_delay={:?}",
+                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
+                current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, sent_enough_protected_data, enough_room_in_cwin,
+                cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), fec_cooldown, self.delayed_sending.map(|inst| inst.duration_since(now)));
         
         self.state_sending_repair = if nothing_to_send && sent_enough_protected_data
                                        && (self.earliest_unprotected_source_symbol_sent_time.is_none() 
@@ -115,12 +116,12 @@ impl BurstsFECScheduler {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_sent_stream_bytes_sent_when_nothing_to_send = conn.tx_data as usize;
         }
-        let should_send = (match self.state_sending_repair {
+        let should_send = match self.state_sending_repair {
             Some(state) => {
                 (state.repair_symbols_sent * symbol_size) < state.repair_bytes_to_send && now >= self.delayed_sending.unwrap_or(now)
             }
             None => false,
-        });
+        };
         if should_send {
             self.n_sent_stream_bytes_when_last_repair = current_sent_stream_bytes;
         }
