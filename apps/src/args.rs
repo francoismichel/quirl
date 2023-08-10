@@ -554,6 +554,7 @@ Options:
   --multipath                 Enable multipath support.
   --multipath-old             Enable (old v4) multipath support.
   --send-fec               Sends FEC to protect the STREAM and DATAGRAM frames
+  --receive-fec            Processes FEC data to protect the received STREAM and DATAGRAM frames
   -h --help                   Show this screen.
 ";
 
