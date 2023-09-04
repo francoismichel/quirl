@@ -3194,7 +3194,7 @@ impl Connection {
 
                     frame::Frame::Repair { .. } => {
                         if let Some(scheduler) = &mut self.fec_scheduler {
-                            scheduler.acked_repair_symbol();
+                            scheduler.acked_repair_symbol(&self.fec_encoder);
                         }
                     },
 
@@ -3738,7 +3738,7 @@ impl Connection {
 
                             frame::Frame::Repair { .. } => {
                                 if let Some(scheduler) = &mut self.fec_scheduler {
-                                    scheduler.lost_repair_symbol();
+                                    scheduler.lost_repair_symbol(&self.fec_encoder);
                                 }
                             },
         
@@ -3748,7 +3748,7 @@ impl Connection {
                     recovery::LostFrame::LostAndRecovered(frame) => {
                         if let frame::Frame::Repair { .. } = frame {
                             if let Some(scheduler) = &mut self.fec_scheduler {
-                                scheduler.lost_repair_symbol();
+                                scheduler.lost_repair_symbol(&self.fec_encoder);
                             }
                         }
                     }
@@ -4521,7 +4521,7 @@ impl Connection {
                             };
                             if push_frame_to_pkt!(b, frames, frame, left) {
                                 in_flight = true;
-                                self.fec_scheduler.as_mut().unwrap().sent_repair_symbol();
+                                self.fec_scheduler.as_mut().unwrap().sent_repair_symbol(&self.fec_encoder);
                                 ack_eliciting = true;
                                 self.repair_symbols_sent_count += 1;
                             } else {
@@ -4554,7 +4554,7 @@ impl Connection {
                     in_flight = true;
                     fec_protected = true;
                     if let Some(fec_scheduler) = &mut self.fec_scheduler {
-                        fec_scheduler.sent_source_symbol();
+                        fec_scheduler.sent_source_symbol(&self.fec_encoder);
                     }
                 } else {
                     error!("buffer too short when adding ID frame");

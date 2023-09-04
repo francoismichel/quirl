@@ -1,3 +1,5 @@
+use networkcoding::Encoder;
+
 use crate::Connection;
 use crate::path::Path;
 
@@ -73,23 +75,23 @@ impl BackgroundFECScheduler {
         }
     }
 
-    pub fn sent_repair_symbol(&mut self) {
+    pub fn sent_repair_symbol(&mut self, _encoder: &Encoder) {
         self.n_repair_in_flight += 1;
         self.rs_sent_for_this_round = true;
     }
 
-    pub fn acked_repair_symbol(&mut self) {
+    pub fn acked_repair_symbol(&mut self, _encoder: &Encoder) {
         self.n_repair_in_flight -= 1;
 
     }
     
-    pub fn sent_source_symbol(&mut self) {
+    pub fn sent_source_symbol(&mut self, _encoder: &Encoder) {
         // reset the delaying logic, we start a new round as we send new source symbols
         self.reset_rs_delaying();
     }
 
-    pub fn lost_repair_symbol(&mut self) {
-        self.acked_repair_symbol()
+    pub fn lost_repair_symbol(&mut self, encoder: &Encoder) {
+        self.acked_repair_symbol(encoder)
     }
 
     // returns an Instant at which the stack should wake up to sent new repair symbols
