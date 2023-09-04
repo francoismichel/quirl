@@ -102,8 +102,8 @@ fn on_packet_acked(
 }
 
 fn congestion_event(
-    r: &mut Recovery, _lost_bytes: usize, largest_lost_pkt: &Sent,
-    epoch: packet::Epoch, now: Instant,
+    r: &mut Recovery, _lost_bytes: usize, _largest_lost_pkt: &Sent,
+    _epoch: packet::Epoch, _now: Instant,
 ) {
     r.congestion_window = std::usize::MAX-1;
 }
