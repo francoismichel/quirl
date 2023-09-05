@@ -114,6 +114,8 @@ impl BurstsFECScheduler {
         } else if let Some(earliest_sent_time) = self.earliest_unprotected_source_symbol_sent_time {
             if now < earliest_sent_time + max_jitter {
                 self.next_timeout = Some(earliest_sent_time + max_jitter);
+            } else {
+                self.next_timeout = None;
             }
         }
         should_send
