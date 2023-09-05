@@ -72,7 +72,7 @@ impl BurstsFECScheduler {
                 current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, sent_enough_protected_data, enough_room_in_cwin,
                 cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), max_jitter);
         
-        self.state_sending_repair = if nothing_to_send && sent_enough_protected_data
+        self.state_sending_repair = if self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data
                                        && (self.earliest_unprotected_source_symbol_sent_time.is_none() 
                                            || now > self.earliest_unprotected_source_symbol_sent_time.unwrap() + max_jitter) {
             // a burst of packets has occurred, so send repair symbols
