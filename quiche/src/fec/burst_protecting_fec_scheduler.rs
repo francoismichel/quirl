@@ -96,7 +96,7 @@ impl BurstsFECScheduler {
                 None
             }
         };
-        if !nothing_to_send && self.previously_in_burst {
+        if !nothing_to_send && !self.previously_in_burst {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_sent_stream_bytes_sent_when_nothing_to_send = conn.tx_data as usize;
         }
