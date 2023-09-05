@@ -15,6 +15,7 @@ pub(crate) struct BurstsFECScheduler {
     n_packets_sent_when_nothing_to_send: usize,
     n_sent_stream_bytes_sent_when_nothing_to_send: usize,
     n_sent_stream_bytes_when_last_repair: usize,
+    previously_in_burst: bool,
     earliest_unprotected_source_symbol_sent_time: Option<std::time::Instant>,
     n_source_symbols_sent_since_last_repair: usize,
     state_sending_repair: Option<SendingState>,
@@ -33,6 +34,7 @@ impl BurstsFECScheduler {
             n_packets_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_when_last_repair: 0,
+            previously_in_burst: false,
             earliest_unprotected_source_symbol_sent_time: None,
             n_source_symbols_sent_since_last_repair: 0,
             state_sending_repair: None,
@@ -94,10 +96,13 @@ impl BurstsFECScheduler {
                 None
             }
         };
-        if nothing_to_send {
+        if !nothing_to_send && self.previously_in_burst {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_sent_stream_bytes_sent_when_nothing_to_send = conn.tx_data as usize;
         }
+
+        // mark the fact that we were in burst for the next call
+        self.previously_in_burst = !nothing_to_send;
         let should_send = match self.state_sending_repair {
             Some(state) => {
                 (state.repair_symbols_sent * symbol_size) < state.repair_bytes_to_send
