@@ -120,6 +120,8 @@ impl BurstsFECScheduler {
             } else {
                 self.next_timeout = None;
             }
+        } else {
+            self.next_timeout = None;
         }
         should_send
     }
