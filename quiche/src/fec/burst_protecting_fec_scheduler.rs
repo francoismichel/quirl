@@ -138,17 +138,23 @@ impl BurstsFECScheduler {
     }
 
     pub fn sent_source_symbol(&mut self, encoder: &Encoder) {
+        let threshold_burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
+        let max_jitter_us: u64 = env::var("DEBUG_QUICHE_FEC_MAX_JITTER_US").unwrap_or(DEFAULT_MAX_JITTER_US.to_string()).parse().unwrap_or(DEFAULT_MAX_JITTER_US);
+        let max_jitter = std::time::Duration::from_micros(max_jitter_us);
+        let now = std::time::Instant::now();
         match self.earliest_unprotected_source_symbol_sent_time {
             None =>  {
-                let threshold_burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
                 // interesting symbols are only symbols that are part of a large enough burst size
                 if self.current_burst_size > threshold_burst_size {
-                    self.earliest_unprotected_source_symbol_sent_time = Some(std::time::Instant::now());
+                    self.earliest_unprotected_source_symbol_sent_time = Some(now);
                 }
             }
             Some(sent_time) => {    // check if that sent_time is still up-to-date
                 if let Some(first_md) = encoder.first_metadata() {
-                    if let Some(window_sent_time) = encoder.get_sent_time(first_md) {
+                    if now > sent_time + max_jitter && self.current_burst_size > threshold_burst_size {
+                        // the time of the last sent burst is expired and there is a new burst candidate to protect
+                        self.earliest_unprotected_source_symbol_sent_time = Some(now);
+                    } else if let Some(window_sent_time) = encoder.get_sent_time(first_md) {
                         if window_sent_time > sent_time {
                             // if the first window symbol has a later sent time than the one we recorded,
                             // then it is outdated and we replace if by the first symbol of the window.
