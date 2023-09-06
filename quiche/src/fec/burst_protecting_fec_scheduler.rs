@@ -16,6 +16,7 @@ pub(crate) struct BurstsFECScheduler {
     n_sent_stream_bytes_sent_when_nothing_to_send: usize,
     n_sent_stream_bytes_when_last_repair: usize,
     previously_in_burst: bool,
+    current_burst_size: usize,
     earliest_unprotected_source_symbol_sent_time: Option<std::time::Instant>,
     n_source_symbols_sent_since_last_repair: usize,
     state_sending_repair: Option<SendingState>,
@@ -35,6 +36,7 @@ impl BurstsFECScheduler {
             n_sent_stream_bytes_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_when_last_repair: 0,
             previously_in_burst: false,
+            current_burst_size: 0,
             earliest_unprotected_source_symbol_sent_time: None,
             n_source_symbols_sent_since_last_repair: 0,
             state_sending_repair: None,
@@ -62,8 +64,8 @@ impl BurstsFECScheduler {
         let nothing_to_send = !dgrams_to_emit && !stream_to_emit;
         let current_sent_count = conn.sent_count;
         let current_sent_stream_bytes = conn.tx_data as usize;
-        let current_burst_size = current_sent_stream_bytes - self.n_sent_stream_bytes_sent_when_nothing_to_send;
-        let sent_enough_protected_data = current_burst_size > threshold_burst_size;
+        self.current_burst_size = current_sent_stream_bytes - self.n_sent_stream_bytes_sent_when_nothing_to_send;
+        let sent_enough_protected_data = self.current_burst_size > threshold_burst_size;
 
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
                 current_sent_bytes={} old_sent_bytes={} sent_enough_protected_data={} enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
@@ -136,7 +138,13 @@ impl BurstsFECScheduler {
 
     pub fn sent_source_symbol(&mut self, encoder: &Encoder) {
         match self.earliest_unprotected_source_symbol_sent_time {
-            None => self.earliest_unprotected_source_symbol_sent_time = Some(std::time::Instant::now()),
+            None =>  {
+                let threshold_burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
+                // interesting symbols are only symbols that are part of a large enough burst size
+                if self.current_burst_size > threshold_burst_size {
+                    self.earliest_unprotected_source_symbol_sent_time = Some(std::time::Instant::now());
+                }
+            }
             Some(sent_time) => {    // check if that sent_time is still up-to-date
                 if let Some(first_md) = encoder.first_metadata() {
                     if let Some(window_sent_time) = encoder.get_sent_time(first_md) {
