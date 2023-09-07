@@ -69,10 +69,13 @@ impl BurstsFECScheduler {
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
                 current_sent_bytes={} old_sent_bytes={} current_burst_size={} sent_enough_protected_data={}
                 enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
-                elapsed_since_first_source_symbol={:?} fec_max_jitter={:?}",
+                elapsed_since_first_source_symbol={:?} fec_max_jitter={:?}
+                packets_lost_per_rtt={:?} var_packets_lost_per_rtt={:?}",
                 dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
                 current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, self.current_burst_size, sent_enough_protected_data, enough_room_in_cwin,
-                cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), max_jitter);
+                cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), max_jitter,
+                path.recovery.packets_lost_per_round_trip(), path.recovery.var_packets_lost_per_round_trip()
+            );
         
         self.state_sending_repair = if self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data {
             // a burst of packets has occurred, so send repair symbols
@@ -80,7 +83,17 @@ impl BurstsFECScheduler {
             let max_repair_data = if bytes_to_protect < 15000 {
                 bytes_to_protect*3/5
             } else {
-                bytes_to_protect/fec_frac_denominator_to_protect
+                let amount_to_protect_when_no_loss_info = bytes_to_protect/fec_frac_denominator_to_protect;
+                match path.recovery.packets_lost_per_round_trip() {
+                    None => {
+                        // no loss info, protect an arbitrary fraction
+                        amount_to_protect_when_no_loss_info
+                    }
+                    Some(packets_lost_per_round_trip) => {
+                        // if we have loss estimations, send avg_lost_packets_per_roundtrip + 4 * std_dev
+                        std::cmp::min((packets_lost_per_round_trip + 2.0 * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , amount_to_protect_when_no_loss_info)
+                    }
+                }
             };
 
             Some(SendingState{
