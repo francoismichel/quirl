@@ -7,6 +7,7 @@ use std::env;
 #[derive(Debug, Clone, Copy)]
 struct SendingState {
     start_time: std::time::Instant,
+    when: std::time::Instant,
     repair_bytes_to_send: usize,
     repair_symbols_sent: usize, // number of repair symbols sent during this state
 }
@@ -15,7 +16,6 @@ pub(crate) struct BurstsFECScheduler {
     n_packets_sent_when_nothing_to_send: usize,
     n_sent_stream_bytes_sent_when_nothing_to_send: usize,
     n_sent_stream_bytes_when_last_repair: usize,
-    previously_in_burst: bool,
     current_burst_size: usize,
     earliest_unprotected_source_symbol_sent_time: Option<std::time::Instant>,
     n_source_symbols_sent_since_last_repair: usize,
@@ -35,7 +35,6 @@ impl BurstsFECScheduler {
             n_packets_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_when_last_repair: 0,
-            previously_in_burst: false,
             current_burst_size: 0,
             earliest_unprotected_source_symbol_sent_time: None,
             n_source_symbols_sent_since_last_repair: 0,
@@ -68,15 +67,14 @@ impl BurstsFECScheduler {
         let sent_enough_protected_data = self.current_burst_size > threshold_burst_size;
 
         trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
-                current_sent_bytes={} old_sent_bytes={} sent_enough_protected_data={} enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
+                current_sent_bytes={} old_sent_bytes={} current_burst_size={} sent_enough_protected_data={}
+                enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
                 elapsed_since_first_source_symbol={:?} fec_max_jitter={:?}",
                 dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
-                current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, sent_enough_protected_data, enough_room_in_cwin,
+                current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, self.current_burst_size, sent_enough_protected_data, enough_room_in_cwin,
                 cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), max_jitter);
         
-        self.state_sending_repair = if self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data
-                                       && (self.earliest_unprotected_source_symbol_sent_time.is_none() 
-                                           || now > self.earliest_unprotected_source_symbol_sent_time.unwrap() + max_jitter) {
+        self.state_sending_repair = if self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data {
             // a burst of packets has occurred, so send repair symbols
             let bytes_to_protect = std::cmp::min(bif, self.n_source_symbols_sent_since_last_repair*symbol_size);
             let max_repair_data = if bytes_to_protect < 15000 {
@@ -85,7 +83,12 @@ impl BurstsFECScheduler {
                 bytes_to_protect/fec_frac_denominator_to_protect
             };
 
-            Some(SendingState{start_time: now, repair_bytes_to_send: max_repair_data, repair_symbols_sent: 0})
+            Some(SendingState{
+                start_time: now,
+                when: self.earliest_unprotected_source_symbol_sent_time.map(|x| x + max_jitter).unwrap_or(now),
+                repair_bytes_to_send: max_repair_data,
+                repair_symbols_sent: 0,
+            })
         } else {
             // the state expires after 1 RTT
             if let Some(state) = self.state_sending_repair {
@@ -98,25 +101,24 @@ impl BurstsFECScheduler {
                 None
             }
         };
-        if !nothing_to_send && !self.previously_in_burst {
+        if nothing_to_send {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_sent_stream_bytes_sent_when_nothing_to_send = conn.tx_data as usize;
             self.current_burst_size = 0;
         }
 
         // mark the fact that we were in burst for the next call
-        self.previously_in_burst = !nothing_to_send;
         let should_send = match self.state_sending_repair {
             Some(state) => {
-                (state.repair_symbols_sent * symbol_size) < state.repair_bytes_to_send
+                now >= state.when && (state.repair_symbols_sent * symbol_size) < state.repair_bytes_to_send
             }
             None => false,
         };
         if should_send {
             self.n_sent_stream_bytes_when_last_repair = current_sent_stream_bytes;
-        } else if let Some(earliest_sent_time) = self.earliest_unprotected_source_symbol_sent_time {
-            if now < earliest_sent_time + max_jitter {
-                self.next_timeout = Some(earliest_sent_time + max_jitter);
+        } else if let Some(state) = self.state_sending_repair {
+            if now < state.when {
+                self.next_timeout = Some(state.when);
             } else {
                 self.next_timeout = None;
             }
