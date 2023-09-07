@@ -66,12 +66,12 @@ impl BurstsFECScheduler {
         self.current_burst_size = current_sent_stream_bytes - self.n_sent_stream_bytes_sent_when_nothing_to_send;
         let sent_enough_protected_data = self.current_burst_size > threshold_burst_size;
 
-        trace!("fec_scheduler dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
+        trace!("fec_scheduler now={:?} dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
                 current_sent_bytes={} old_sent_bytes={} current_burst_size={} sent_enough_protected_data={}
                 enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
                 elapsed_since_first_source_symbol={:?} fec_max_jitter={:?}
                 packets_lost_per_rtt={:?} var_packets_lost_per_rtt={:?}",
-                dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
+                now, dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
                 current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, self.current_burst_size, sent_enough_protected_data, enough_room_in_cwin,
                 cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), max_jitter,
                 path.recovery.packets_lost_per_round_trip(), path.recovery.var_packets_lost_per_round_trip()
@@ -98,7 +98,7 @@ impl BurstsFECScheduler {
 
             Some(SendingState{
                 start_time: now,
-                when: self.earliest_unprotected_source_symbol_sent_time.map(|x| x + max_jitter).unwrap_or(now),
+                when: now + max_jitter,
                 repair_bytes_to_send: max_repair_data,
                 repair_symbols_sent: 0,
             })
