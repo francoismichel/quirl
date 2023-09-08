@@ -89,6 +89,29 @@ impl BurstsFECScheduler {
             );
         
         self.state_sending_repair = if self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data {
+            Some(SendingState{
+                start_time: now,
+                when: now + max_jitter,
+                burst_start_offset: current_sent_stream_bytes,
+                burst_size: self.current_burst_size,
+                repair_bytes_to_send: 0,    // start with 0 and update afterwards
+                repair_symbols_sent: 0,
+            })
+        } else {
+            // the state expires after 1 RTT
+            if let Some(state) = self.state_sending_repair {
+                if now.duration_since(state.start_time) >= path.recovery.rtt() {
+                    None
+                } else {
+                    self.state_sending_repair
+                }
+            } else {
+                None
+            }
+        };
+
+        // increase the amount of repair symbols to send if needed
+        if let Some(state) = &mut self.state_sending_repair {
             // a new burst of packets has occurred, so send repair symbols
             let bytes_to_protect = std::cmp::min(bif, self.n_source_symbols_sent_since_last_repair*symbol_size);
             let max_repair_data = if bytes_to_protect < 15000 {
@@ -106,27 +129,9 @@ impl BurstsFECScheduler {
                     }
                 }
             };
+            state.repair_bytes_to_send = state.repair_bytes_to_send.max(max_repair_data);
+        }
 
-            Some(SendingState{
-                start_time: now,
-                when: now + max_jitter,
-                burst_start_offset: current_sent_stream_bytes,
-                burst_size: self.current_burst_size,
-                repair_bytes_to_send: max_repair_data,
-                repair_symbols_sent: 0,
-            })
-        } else {
-            // the state expires after 1 RTT
-            if let Some(state) = self.state_sending_repair {
-                if now.duration_since(state.start_time) >= path.recovery.rtt() {
-                    None
-                } else {
-                    self.state_sending_repair
-                }
-            } else {
-                None
-            }
-        };
         if nothing_to_send {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
             self.n_sent_stream_bytes_sent_when_nothing_to_send = conn.tx_data as usize;
