@@ -79,13 +79,13 @@ impl BurstsFECScheduler {
                 path.recovery.packets_lost_per_round_trip(), path.recovery.var_packets_lost_per_round_trip()
             );
         
-        let state_burst_start_offset = if let Some(state) = self.state_sending_repair {
-            state.burst_start_offset
+        let new_sending_round = if let Some(state) = self.state_sending_repair {
+            state.burst_start_offset != current_sent_stream_bytes
         } else {
-            current_sent_stream_bytes
+            true
         };
         // let state_burst_start_offset = self.state_sending_repair.map(|x| x.burst_start_offset).unwrap_or(current_sent_stream_bytes)
-        self.state_sending_repair = if (state_burst_start_offset != current_sent_stream_bytes) && nothing_to_send && sent_enough_protected_data {
+        self.state_sending_repair = if new_sending_round && nothing_to_send && sent_enough_protected_data {
             // a *new* burst of packets has occurred, so send repair symbols
             let bytes_to_protect = std::cmp::min(bif, self.n_source_symbols_sent_since_last_repair*symbol_size);
             let max_repair_data = if bytes_to_protect < 15000 {
