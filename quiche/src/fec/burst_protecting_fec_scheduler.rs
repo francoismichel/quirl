@@ -68,25 +68,28 @@ impl BurstsFECScheduler {
         self.current_burst_size = current_sent_stream_bytes - self.n_sent_stream_bytes_sent_when_nothing_to_send;
         let sent_enough_protected_data = self.current_burst_size > threshold_burst_size;
 
+        if let Some(state) = self.state_sending_repair {
+            if state.repair_symbols_sent*symbol_size >= state.repair_bytes_to_send {
+                // finished this sending round
+                trace!("clear finished sending round");
+                self.state_sending_repair = None;
+            }
+        }
+
         trace!("fec_scheduler now={:?} dgrams_to_emit={} stream_to_emit={} n_repair_in_flight={} sending_state={:?} sent_count={} old_sent_count={}
                 current_sent_bytes={} old_sent_bytes={} current_burst_size={} sent_enough_protected_data={}
                 enough_room_in_cwin={} cwin_available={} minimum_room_in_cwin={}
                 elapsed_since_first_source_symbol={:?} fec_max_jitter={:?}
                 packets_lost_per_rtt={:?} var_packets_lost_per_rtt={:?}",
                 now, dgrams_to_emit, stream_to_emit, self.n_repair_in_flight, self.state_sending_repair, current_sent_count, self.n_packets_sent_when_nothing_to_send,
-                current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, self.current_burst_size, sent_enough_protected_data, enough_room_in_cwin,
+                current_sent_stream_bytes, self.n_sent_stream_bytes_sent_when_nothing_to_send, self.current_burst_size, sent_enough_protected_data,
+                enough_room_in_cwin,
                 cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), max_jitter,
                 path.recovery.packets_lost_per_round_trip(), path.recovery.var_packets_lost_per_round_trip()
             );
         
-        let new_sending_round = if let Some(state) = self.state_sending_repair {
-            state.burst_start_offset != current_sent_stream_bytes
-        } else {
-            true
-        };
-        // let state_burst_start_offset = self.state_sending_repair.map(|x| x.burst_start_offset).unwrap_or(current_sent_stream_bytes)
-        self.state_sending_repair = if new_sending_round && nothing_to_send && sent_enough_protected_data {
-            // a *new* burst of packets has occurred, so send repair symbols
+        self.state_sending_repair = if self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data {
+            // a new burst of packets has occurred, so send repair symbols
             let bytes_to_protect = std::cmp::min(bif, self.n_source_symbols_sent_since_last_repair*symbol_size);
             let max_repair_data = if bytes_to_protect < 15000 {
                 bytes_to_protect*3/5
