@@ -8,6 +8,8 @@ use std::env;
 struct SendingState {
     start_time: std::time::Instant,
     when: std::time::Instant,
+    burst_start_offset: usize,
+    burst_size: usize,
     repair_bytes_to_send: usize,
     repair_symbols_sent: usize, // number of repair symbols sent during this state
 }
@@ -77,8 +79,14 @@ impl BurstsFECScheduler {
                 path.recovery.packets_lost_per_round_trip(), path.recovery.var_packets_lost_per_round_trip()
             );
         
-        self.state_sending_repair = if self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data {
-            // a burst of packets has occurred, so send repair symbols
+        let state_burst_start_offset = if let Some(state) = self.state_sending_repair {
+            state.burst_start_offset
+        } else {
+            current_sent_stream_bytes
+        };
+        // let state_burst_start_offset = self.state_sending_repair.map(|x| x.burst_start_offset).unwrap_or(current_sent_stream_bytes)
+        self.state_sending_repair = if (state_burst_start_offset != current_sent_stream_bytes) && nothing_to_send && sent_enough_protected_data {
+            // a *new* burst of packets has occurred, so send repair symbols
             let bytes_to_protect = std::cmp::min(bif, self.n_source_symbols_sent_since_last_repair*symbol_size);
             let max_repair_data = if bytes_to_protect < 15000 {
                 bytes_to_protect*3/5
@@ -99,6 +107,8 @@ impl BurstsFECScheduler {
             Some(SendingState{
                 start_time: now,
                 when: now + max_jitter,
+                burst_start_offset: current_sent_stream_bytes,
+                burst_size: self.current_burst_size,
                 repair_bytes_to_send: max_repair_data,
                 repair_symbols_sent: 0,
             })
