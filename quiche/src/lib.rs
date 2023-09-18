@@ -3249,7 +3249,7 @@ impl Connection {
 
                     frame::Frame::SourceSymbolHeader { metadata, .. } => {
                         if self.emit_fec {
-                            self.fec_encoder.remove_up_to(metadata);
+                            self.fec_encoder.symbol_landed(metadata);
                         }
                     }
 
@@ -3288,6 +3288,8 @@ impl Connection {
                     .pmtud_update_max_datagram_size(p.pmtud.get_current());
             }
         }
+
+        self.fec_encoder.remove_landed_symbols();
 
         // Now that we processed all the frames, if there is a path that has no
         // Destination CID, try to allocate one.
@@ -3794,6 +3796,10 @@ impl Connection {
                                     scheduler.lost_repair_symbol(&self.fec_encoder);
                                 }
                             },
+
+                            frame::Frame::SourceSymbolHeader { metadata, .. } => {
+                                self.fec_encoder.symbol_landed(metadata);
+                            }
         
                             frame::Frame::Ping { mtu_probe } if mtu_probe.is_some() => {
                                 p.pmtud.pmtu_probe_lost();
@@ -3802,16 +3808,24 @@ impl Connection {
                         }
                     }
                     recovery::LostFrame::LostAndRecovered(frame) => {
-                        if let frame::Frame::Repair { .. } = frame {
-                            if let Some(scheduler) = &mut self.fec_scheduler {
-                                scheduler.lost_repair_symbol(&self.fec_encoder);
+                        match frame {
+                            frame::Frame::Repair { .. } => {
+                                if let Some(scheduler) = &mut self.fec_scheduler {
+                                    scheduler.lost_repair_symbol(&self.fec_encoder);
+                                }
                             }
+                            frame::Frame::SourceSymbolHeader { metadata, .. } => {
+                                self.fec_encoder.symbol_landed(metadata);
+                            }
+                            _ => (),
                         }
                     },
                 }
                 
             }
         }
+
+        self.fec_encoder.remove_landed_symbols();
 
         let is_app_limited = self.delivery_rate_check_if_app_limited();
         let n_paths = self.paths.len();
