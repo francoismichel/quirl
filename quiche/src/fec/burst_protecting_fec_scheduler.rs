@@ -29,6 +29,7 @@ const DEFAULT_BURST_SIZE: usize = 15000;
 const DEFAULT_MAX_JITTER_US: u64 = 0;
 const DEFAULT_FRAC_DENOMINATOR_TO_PROTECT: usize = 2;
 const DEFAULT_MINIMUM_ROOM_IN_CWIN: usize = 5000;
+const DEFAULT_STDDEV_FACTOR: f64 = 2.0;
 
 impl BurstsFECScheduler {
     pub fn new() -> BurstsFECScheduler {
@@ -53,6 +54,7 @@ impl BurstsFECScheduler {
         let max_jitter = std::time::Duration::from_micros(max_jitter_us);
         let fec_frac_denominator_to_protect: usize = env::var("DEBUG_QUICHE_DEFAULT_FRAC_DENOMINATOR_TO_PROTECT").unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT.to_string()).parse().unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT);
         let minimum_room_in_cwin = env::var("DEBUG_QUICHE_MINIMUM_ROOM_IN_CWIN").unwrap_or(DEFAULT_MINIMUM_ROOM_IN_CWIN.to_string()).parse().unwrap_or(DEFAULT_MINIMUM_ROOM_IN_CWIN);
+        let stddev_factor = env::var("DEBUG_QUICHE_STDDEV_FACTOR").unwrap_or(DEFAULT_STDDEV_FACTOR.to_string()).parse().unwrap_or(DEFAULT_STDDEV_FACTOR);
 
         let dgrams_to_emit = conn.dgram_max_writable_len().is_some();
         let stream_to_emit = conn.streams.has_flushable();
@@ -124,8 +126,8 @@ impl BurstsFECScheduler {
                         amount_to_protect_when_no_loss_info
                     }
                     Some(packets_lost_per_round_trip) => {
-                        // if we have loss estimations, send avg_lost_packets_per_roundtrip + 4 * std_dev
-                        std::cmp::min((packets_lost_per_round_trip + 2.0 * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , amount_to_protect_when_no_loss_info)
+                        // if we have loss estimations, send avg_lost_packets_per_roundtrip + 2 * std_dev
+                        std::cmp::min((packets_lost_per_round_trip + stddev_factor * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , amount_to_protect_when_no_loss_info)
                     }
                 }
             };
