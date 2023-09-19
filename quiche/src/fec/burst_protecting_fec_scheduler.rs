@@ -1,4 +1,4 @@
-use networkcoding::Encoder;
+use networkcoding::{Encoder, SourceSymbolMetadata};
 
 use crate::Connection;
 use crate::path::Path;
@@ -10,6 +10,7 @@ struct SendingState {
     when: std::time::Instant,
     burst_start_offset: usize,
     burst_size: usize,
+    last_metadata_when_triggered: SourceSymbolMetadata,
     repair_bytes_to_send: usize,
     repair_symbols_sent: usize, // number of repair symbols sent during this state
 }
@@ -90,19 +91,20 @@ impl BurstsFECScheduler {
                 path.recovery.packets_lost_per_round_trip(), path.recovery.var_packets_lost_per_round_trip()
             );
         
-        self.state_sending_repair = if self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data {
+        self.state_sending_repair = if conn.fec_encoder.last_metadata().is_some() && self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data {
             Some(SendingState{
                 start_time: now,
                 when: now + max_jitter,
+                last_metadata_when_triggered: conn.fec_encoder.last_metadata().unwrap(),
                 burst_start_offset: current_sent_stream_bytes,
                 burst_size: self.current_burst_size,
                 repair_bytes_to_send: 0,    // start with 0 and update afterwards
                 repair_symbols_sent: 0,
             })
         } else {
-            // the state expires after 1 RTT
+            // the state expires after the considered symbols have all landed
             if let Some(state) = self.state_sending_repair {
-                if now.duration_since(state.start_time) >= path.recovery.rtt() {
+                if !conn.fec_encoder.contains_symbol(state.last_metadata_when_triggered) {
                     None
                 } else {
                     self.state_sending_repair
