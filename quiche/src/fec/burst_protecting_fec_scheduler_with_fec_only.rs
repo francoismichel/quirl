@@ -14,7 +14,7 @@ struct SendingState {
     repair_bytes_to_send: usize,
     repair_symbols_sent: usize, // number of repair symbols sent during this state
 }
-pub(crate) struct BurstsFECScheduler {
+pub(crate) struct BurstsFECSchedulerWithFECOnly {
     n_repair_in_flight: u64,
     n_packets_sent_when_nothing_to_send: usize,
     n_sent_stream_bytes_sent_when_nothing_to_send: usize,
@@ -32,9 +32,9 @@ const DEFAULT_FRAC_DENOMINATOR_TO_PROTECT: usize = 2;
 const DEFAULT_MINIMUM_ROOM_IN_CWIN: usize = 5000;
 const DEFAULT_STDDEV_FACTOR: f64 = 2.0;
 
-impl BurstsFECScheduler {
-    pub fn new() -> BurstsFECScheduler {
-        BurstsFECScheduler{
+impl BurstsFECSchedulerWithFECOnly {
+    pub fn new() -> BurstsFECSchedulerWithFECOnly {
+        BurstsFECSchedulerWithFECOnly{
             n_repair_in_flight: 0,
             n_packets_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_sent_when_nothing_to_send: 0,
@@ -49,6 +49,11 @@ impl BurstsFECScheduler {
 
     pub fn should_send_repair(&mut self, conn: &Connection, path: &Path, symbol_size: usize) -> bool {
         let now = std::time::Instant::now();
+
+        if !path.fec_only {
+            return false;
+        }
+
         // this variable can be overriden by the DEBUG_QUICHE_FEC_BURST_SIZE_BYTES environment variable for debug purposes
         let threshold_burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
         let max_jitter_us: u64 = env::var("DEBUG_QUICHE_FEC_MAX_JITTER_US").unwrap_or(DEFAULT_MAX_JITTER_US.to_string()).parse().unwrap_or(DEFAULT_MAX_JITTER_US);

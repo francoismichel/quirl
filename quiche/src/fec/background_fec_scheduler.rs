@@ -38,19 +38,27 @@ impl BackgroundFECScheduler {
         // send if no more data to send && we sent less repair than half the cwin
 
         
-        let bif = std::cmp::min(conn.fec_encoder.n_protected_symbols() * symbol_size, path.recovery.cwnd() - path.recovery.cwnd_available());
-        let max_repair_data = if bif < symbol_size {
+
+        // send if no more data to send && we sent less repair than half the cwin
+        let mut total_bif = 0;
+        for (_, path) in conn.paths.iter() {
+            if !path.fec_only {
+                total_bif += path.recovery.cwnd().saturating_sub(path.recovery.cwnd_available());
+            }
+        }
+        let total_bif = std::cmp::min(conn.fec_encoder.n_protected_symbols() * symbol_size, total_bif);
+        let max_repair_data = if total_bif < symbol_size {
             0
-        } else if bif < 15000 {
-            bif*3/5
+        } else if total_bif < 15000 {
+            total_bif*3/5
         } else {
             match path.recovery.packets_lost_per_round_trip() {
                 None => {
-                    std::cmp::min(REPAIR_TO_SEND_WITH_NO_LOSS_INFO * symbol_size, bif/4)
+                    std::cmp::min(REPAIR_TO_SEND_WITH_NO_LOSS_INFO * symbol_size, total_bif/4)
                 }
                 Some(packets_lost_per_round_trip) => {
                     // if we have loss estimations, send avg_lost_packets_per_roundtrip + 4 * variation
-                    std::cmp::min((packets_lost_per_round_trip + 2.0 * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , bif/3)
+                    std::cmp::min((packets_lost_per_round_trip + 2.0 * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , total_bif/3)
                 }
             }
         };

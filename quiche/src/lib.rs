@@ -4383,11 +4383,16 @@ impl Connection {
             }
         }
 
+        let fec_only_paths_exist = self.paths.iter().all(|(_, p)| !p.fec_only);
+        let should_send_repair_symbol = self.should_send_repair_symbol(send_pid)?;
         let path = self.paths.get_mut(send_pid)?;
 
+        let fec_only_path = path.fec_only;
+        let path_active = path.active();
+        let path_is_standby = path.is_standby();
         // Create CONNECTION_CLOSE frame. Try to send this only on the active
         // path, unless it is the last one available.
-        if path.active() || n_paths == 1 {
+        if path_active || n_paths == 1 {
             if let Some(conn_err) = self.local_error.as_ref() {
                 if conn_err.is_app {
                     // Create ApplicationClose frame.
@@ -4429,7 +4434,7 @@ impl Connection {
         if crypto_space.crypto_stream.is_flushable() &&
             left > frame::MAX_CRYPTO_OVERHEAD &&
             !is_closing &&
-            path.active()
+            path_active
         {
             let crypto_off = crypto_space.crypto_stream.send.off_front();
 
@@ -4509,9 +4514,10 @@ impl Connection {
 
 
         let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?, recovered: false}.wire_len();
-        let should_protect_packet = self.emit_fec 
+        let should_protect_packet = self.emit_fec
+                                    && !fec_only_path
                                     && !is_closing 
-                                    && path.active() 
+                                    && path_active 
                                     && pkt_type == packet::Type::Short
                                     && ((left > max_fec_overhead + 1 + frame::MAX_DGRAM_OVERHEAD + self.dgram_send_queue.peek_front_len().unwrap_or(left + 1) && do_dgram) // enough space to write a datagram frame and its content
                                         || (left > max_fec_overhead + 1 + frame::MAX_STREAM_OVERHEAD && stream_to_emit)); // enough space to write a stream frame
@@ -4521,10 +4527,11 @@ impl Connection {
             left -= std::cmp::min(32usize.saturating_sub(space_reduction_due_to_cwnd), left);
         }
 
-        
+        let can_send_fec = self.emit_fec && (fec_only_path || fec_only_paths_exist);
+
         // Create REPAIR frame.
-        if self.emit_fec && pkt_type == packet::Type::Short
-            && self.should_send_repair_symbol(send_pid)?
+        if can_send_fec && pkt_type == packet::Type::Short
+            && should_send_repair_symbol
             && self.fec_encoder.can_send_repair_symbols() {
             if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
                 if left >= octets::varint_len(0x32) + self.fec_encoder.next_repair_symbol_size(md)? {
@@ -4584,8 +4591,8 @@ impl Connection {
         if (pkt_type == packet::Type::Short || pkt_type == packet::Type::ZeroRTT) &&
             left > frame::MAX_DGRAM_OVERHEAD &&
             !is_closing &&
-            path.active() &&
-            do_dgram
+            path_active &&
+            !fec_only_path && do_dgram
         {
             if let Some(max_dgram_payload) = max_dgram_len {
                 while let Some(len) = self.dgram_send_queue.peek_front_len() {
@@ -4662,9 +4669,10 @@ impl Connection {
         if (pkt_type == packet::Type::Short || pkt_type == packet::Type::ZeroRTT) &&
             left > frame::MAX_STREAM_OVERHEAD &&
             !is_closing &&
-            path.active() &&
+            path_active &&
+            !fec_only_path &&
             !dgram_emitted &&
-            (consider_standby_paths || !path.is_standby())
+            (consider_standby_paths || !path_is_standby)
         {
             while let Some(priority_key) = self.streams.peek_flushable() {
                 let stream_id = priority_key.id;
@@ -5061,6 +5069,15 @@ impl Connection {
                     .path_id_from_addrs(&(local_addr, peer_addr))
                     .and_then(|pid| self.paths.get_mut(pid).ok())
                     .map(|path| path.recovery.set_send_quantum(v)).ok_or(Error::InvalidState)
+    }
+
+    /// Considers this path as a FEC-only path: no user data (streams or datagrams) are sent on this
+    /// path, only REPAIR frame and QUIC regular control data
+    pub fn set_path_fec_only(&mut self, local_addr: SocketAddr, peer_addr: SocketAddr, v: bool) -> Result<()> {
+        self.paths
+            .path_id_from_addrs(&(local_addr, peer_addr))
+            .and_then(|pid| self.paths.get_mut(pid).ok())
+            .map(|path| {path.fec_only = v} ).ok_or(Error::UnavailablePath)
     }
 
     /// Returns the size of the send quantum, in bytes.
@@ -6599,7 +6616,7 @@ impl Connection {
     /// Returns the sequence number associated to the provided Connection ID.
     ///
     /// [`source_cids_left()`]: struct.Connection.html#method.source_cids_left
-    /// [`IdLimit`]: enum.Error.html#IdLimit
+    /// [`IdLimit`²]: enum.Error.html#IdLimit
     /// [`InvalidState`]: enum.Error.html#InvalidState
     pub fn new_source_cid(
         &mut self, scid: &ConnectionId, reset_token: u128, retire_if_needed: bool,
@@ -7382,6 +7399,7 @@ impl Connection {
         // If there are flushable, almost full or blocked streams, use the
         // Application epoch.
         let send_path = self.paths.get(send_pid)?;
+        let can_send_fec = self.emit_fec && send_path.fec_only || self.paths.iter().all(|(_, p)| !p.fec_only);
         if (self.is_established() || self.is_in_early_data()) &&
             (self.should_send_handshake_done() ||
                 self.almost_full ||
@@ -7403,7 +7421,7 @@ impl Connection {
                 self.paths.has_path_status() ||
                 send_path.needs_ack_eliciting ||
                 send_path.probing_required() ||
-                (self.emit_fec && self.should_send_repair_symbol(send_pid)?))
+                (can_send_fec && self.should_send_repair_symbol(send_pid)?))
         {
             // Only clients can send 0-RTT packets.
             if !self.is_server && self.is_in_early_data() {
