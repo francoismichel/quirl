@@ -162,7 +162,7 @@ impl BurstsFECScheduler {
         if should_send {
             self.n_sent_stream_bytes_when_last_repair = current_sent_stream_bytes;
         } else if let Some(state) = self.state_sending_repair {
-            if now < state.when {
+            if now < state.when && enough_room_in_cwin {
                 self.next_timeout = Some(state.when);
             } else {
                 self.next_timeout = None;
