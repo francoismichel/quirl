@@ -7990,8 +7990,8 @@ impl Connection {
                 if self.receive_fec {
                     let id = source_symbol_metadata_to_u64(source_symbol.metadata());
                     if self.fec_receive_window_size as u64 <= id {
-                        let path = self.paths.get_active()?;
-                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_receive_window_size as u64), Some(now - path.recovery.pto()));
+                        let max_pto = self.paths.iter().filter(|(_, p)| p.active()).map(|(_, p)| p.recovery.pto()).max().unwrap_or(std::time::Duration::ZERO);
+                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_receive_window_size as u64), Some(now - max_pto));
                     }
 
                     match self.fec_decoder.receive_source_symbol(source_symbol, now) {
