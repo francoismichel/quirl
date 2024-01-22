@@ -796,6 +796,10 @@ impl Recovery {
             self.prr.snd_cnt
     }
 
+    pub fn bif(&self) -> usize {
+        self.bytes_in_flight
+    }
+
     pub fn rtt(&self) -> Duration {
         self.smoothed_rtt.unwrap_or(INITIAL_RTT)
     }
