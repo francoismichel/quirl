@@ -789,6 +789,10 @@ impl Recovery {
             self.congestion.prr.snd_cnt
     }
 
+    pub fn bif(&self) -> usize {
+        self.bytes_in_flight
+    }
+
     pub fn rtt(&self) -> Duration {
         self.rtt_stats.rtt()
     }

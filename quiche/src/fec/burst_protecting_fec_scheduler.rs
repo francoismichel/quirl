@@ -61,8 +61,7 @@ impl BurstsFECScheduler {
         let stream_to_emit = conn.streams.has_flushable();
         // send if no more data to send && we sent less repair than half the cwin
 
-        let cwnd = path.recovery.cwnd();
-        let bif = cwnd.saturating_sub(path.recovery.cwnd_available());
+        let bif = path.recovery.bif();
         let cwin_available = path.recovery.cwnd_available();
         let enough_room_in_cwin = cwin_available > minimum_room_in_cwin;
         let nothing_to_send = !dgrams_to_emit && !stream_to_emit;

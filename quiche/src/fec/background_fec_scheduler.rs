@@ -38,7 +38,7 @@ impl BackgroundFECScheduler {
         // send if no more data to send && we sent less repair than half the cwin
 
         
-        let bif = std::cmp::min(conn.fec_encoder.n_protected_symbols() * symbol_size, path.recovery.cwnd() - path.recovery.cwnd_available());
+        let bif = path.recovery.bif();
         let max_repair_data = if bif < symbol_size {
             0
         } else if bif < 15000 {
