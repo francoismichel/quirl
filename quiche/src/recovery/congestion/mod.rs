@@ -119,7 +119,7 @@ impl Congestion {
             max_datagram_size: recovery_config.max_send_udp_payload_size,
 
             send_quantum: initial_congestion_window,
-            
+
             current_loss_epoch_start_time: None,
             current_loss_epoch_lost_packets_count: 0,
             max_lost_packets_per_epoch: None,
@@ -168,7 +168,6 @@ impl Congestion {
     pub(crate) fn send_quantum(&self) -> usize {
         self.send_quantum
     }
-
 
     pub fn set_send_quantum(&mut self, v: usize) {
         self.send_quantum = v;
@@ -236,7 +235,6 @@ impl Congestion {
         // Fill in a rate sample.
         self.delivery_rate.generate_rate_sample(*rtt_stats.min_rtt);
 
-
         // compute loss statistics
         if let Some(start_time) = self.current_loss_epoch_start_time {
             if now.duration_since(start_time) > rtt_stats.rtt() {
@@ -246,22 +244,36 @@ impl Congestion {
                 match self.smoothed_lost_packets_per_epoch {
                     // First loss rate sample.
                     None => {
-                        self.smoothed_lost_packets_per_epoch = Some(self.current_loss_epoch_lost_packets_count as f64);
+                        self.smoothed_lost_packets_per_epoch = Some(
+                            self.current_loss_epoch_lost_packets_count as f64,
+                        );
 
                         self.var_lost_packets_per_epoch = 1.0;
                     },
 
                     Some(slostpackets) => {
-                        self.var_lost_packets_per_epoch = self.var_lost_packets_per_epoch * 3.0 / 4.0 +
-                            (slostpackets - self.current_loss_epoch_lost_packets_count as f64).abs() * (1.0 / 4.0);
+                        self.var_lost_packets_per_epoch =
+                            self.var_lost_packets_per_epoch * 3.0 / 4.0 +
+                                (slostpackets -
+                                    self.current_loss_epoch_lost_packets_count
+                                        as f64)
+                                    .abs() *
+                                    (1.0 / 4.0);
 
                         self.smoothed_lost_packets_per_epoch = Some(
-                            slostpackets * (7.0 / 8.0) + self.current_loss_epoch_lost_packets_count as f64 * (1.0 / 8.0),
+                            slostpackets * (7.0 / 8.0) +
+                                self.current_loss_epoch_lost_packets_count
+                                    as f64 *
+                                    (1.0 / 8.0),
                         );
                     },
                 }
 
-                self.max_lost_packets_per_epoch = Some(self.max_lost_packets_per_epoch.unwrap_or(0).max(self.current_loss_epoch_lost_packets_count));
+                self.max_lost_packets_per_epoch = Some(
+                    self.max_lost_packets_per_epoch
+                        .unwrap_or(0)
+                        .max(self.current_loss_epoch_lost_packets_count),
+                );
                 self.current_loss_epoch_start_time = None;
                 self.current_loss_epoch_lost_packets_count = 0;
             }
@@ -307,13 +319,13 @@ impl Congestion {
 #[repr(C)]
 pub enum CongestionControlAlgorithm {
     /// Reno congestion control algorithm. `reno` in a string form.
-    Reno  = 0,
+    Reno     = 0,
     /// CUBIC congestion control algorithm (default). `cubic` in a string form.
-    CUBIC = 1,
+    CUBIC    = 1,
     /// BBR congestion control algorithm. `bbr` in a string form.
-    BBR   = 2,
+    BBR      = 2,
     /// BBRv2 congestion control algorithm. `bbr2` in a string form.
-    BBR2  = 3,
+    BBR2     = 3,
     /// DISABLED congestion control. `disabled` in a string form.
     DISABLED = 4,
 }
@@ -391,11 +403,11 @@ mod bbr;
 mod bbr2;
 mod cubic;
 mod delivery_rate;
+mod disabled_cc;
 mod hystart;
 pub(crate) mod pacer;
 mod prr;
 mod reno;
-mod disabled_cc;
 
 #[cfg(test)]
 mod test_sender;

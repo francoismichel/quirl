@@ -30,7 +30,6 @@
 
 use std::time::Instant;
 
-
 use crate::recovery::rtt::RttStats;
 use crate::recovery::Acked;
 use crate::recovery::Sent;
@@ -52,7 +51,8 @@ pub static DISABLED_CC: CongestionControlOps = CongestionControlOps {
 pub fn on_init(_r: &mut Congestion) {}
 
 fn on_packet_sent(
-    _r: &mut Congestion, _sent_bytes: usize, _bytes_in_flight: usize, _now: Instant,
+    _r: &mut Congestion, _sent_bytes: usize, _bytes_in_flight: usize,
+    _now: Instant,
 ) {
 }
 
@@ -75,7 +75,7 @@ fn congestion_event(
     r: &mut Congestion, _bytes_in_flight: usize, _lost_bytes: usize,
     _largest_lost_pkt: &Sent, _now: Instant,
 ) {
-    r.congestion_window = usize::MAX-1;
+    r.congestion_window = usize::MAX - 1;
 }
 
 fn checkpoint(_r: &mut Congestion) {}

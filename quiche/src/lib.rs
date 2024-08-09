@@ -417,12 +417,14 @@ use std::net::SocketAddr;
 
 use std::str::FromStr;
 
+use networkcoding::source_symbol_metadata_from_u64;
+use networkcoding::source_symbol_metadata_to_u64;
+use networkcoding::vandermonde_lc::decoder::VLCDecoder;
+use networkcoding::vandermonde_lc::encoder::VLCEncoder;
+use networkcoding::SourceSymbol;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::time::Instant;
-use networkcoding::{source_symbol_metadata_from_u64, source_symbol_metadata_to_u64, SourceSymbol};
-use networkcoding::vandermonde_lc::decoder::VLCDecoder;
-use networkcoding::vandermonde_lc::encoder::VLCEncoder;
 
 use smallvec::SmallVec;
 
@@ -601,7 +603,8 @@ pub enum Error {
     /// Generated or received a wrong symbol ID
     BadSymbolID,
 
-    /// Error during the creation of a source symbol (e.g. could not put correctly the frames to protect in the symbol)
+    /// Error during the creation of a source symbol (e.g. could not put
+    /// correctly the frames to protect in the symbol)
     SourceSymbolCreationError,
 }
 
@@ -834,7 +837,6 @@ pub struct RecoveredSymbol {
     pub received_time: Option<std::time::Instant>,
 }
 
-
 /// Stores configuration shared between multiple connections.
 pub struct Config {
     local_transport_params: TransportParams,
@@ -928,8 +930,16 @@ impl Config {
             initial_congestion_window_packets:
                 DEFAULT_INITIAL_CONGESTION_WINDOW_PACKETS,
             pmtud: false,
-            hystart: std::env::var("QUICHE_FEC_OVERRIDE_HYSTART").unwrap_or_default().parse().unwrap_or(1) != 0,
-            pacing: std::env::var("QUICHE_FEC_OVERRIDE_PACING").unwrap_or_default().parse().unwrap_or(1) != 0,
+            hystart: std::env::var("QUICHE_FEC_OVERRIDE_HYSTART")
+                .unwrap_or_default()
+                .parse()
+                .unwrap_or(1) !=
+                0,
+            pacing: std::env::var("QUICHE_FEC_OVERRIDE_PACING")
+                .unwrap_or_default()
+                .parse()
+                .unwrap_or(1) !=
+                0,
             max_pacing_rate: None,
 
             dgram_recv_max_queue_len: DEFAULT_MAX_DGRAM_QUEUE_LEN,
@@ -947,13 +957,37 @@ impl Config {
 
             disable_dcid_reuse: false,
 
-            // allow overriding these parameters from env vars to allow modifying applications from the outside
-            fec_scheduler_algorithm: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SCHEDULER").unwrap_or_default().parse().unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
-            emit_fec:  std::env::var("QUICHE_FEC_OVERRIDE_EMIT_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
-            receive_fec: std::env::var("QUICHE_FEC_OVERRIDE_RECEIVE_FEC").unwrap_or_default().parse().unwrap_or(0) != 0,
-            
-            fec_receive_window_size: std::env::var("QUICHE_FEC_OVERRIDE_FEC_RECEIVE_WINDOW_SIZE").unwrap_or_default().parse().unwrap_or(DEFAULT_FEC_RECEIVE_WINDOW_SIZE),
-            fec_send_window_size: std::env::var("QUICHE_FEC_OVERRIDE_FEC_SEND_WINDOW_SIZE").unwrap_or_default().parse().unwrap_or(DEFAULT_FEC_SEND_WINDOW_SIZE),
+            // allow overriding these parameters from env vars to allow modifying
+            // applications from the outside
+            fec_scheduler_algorithm: std::env::var(
+                "QUICHE_FEC_OVERRIDE_FEC_SCHEDULER",
+            )
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(FECSchedulerAlgorithm::NoRedundancy),
+            emit_fec: std::env::var("QUICHE_FEC_OVERRIDE_EMIT_FEC")
+                .unwrap_or_default()
+                .parse()
+                .unwrap_or(0) !=
+                0,
+            receive_fec: std::env::var("QUICHE_FEC_OVERRIDE_RECEIVE_FEC")
+                .unwrap_or_default()
+                .parse()
+                .unwrap_or(0) !=
+                0,
+
+            fec_receive_window_size: std::env::var(
+                "QUICHE_FEC_OVERRIDE_FEC_RECEIVE_WINDOW_SIZE",
+            )
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(DEFAULT_FEC_RECEIVE_WINDOW_SIZE),
+            fec_send_window_size: std::env::var(
+                "QUICHE_FEC_OVERRIDE_FEC_SEND_WINDOW_SIZE",
+            )
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(DEFAULT_FEC_SEND_WINDOW_SIZE),
 
             real_time: false,
         })
@@ -1440,7 +1474,7 @@ impl Config {
     pub fn set_fec_receive_window_size(&mut self, size: usize) {
         self.fec_receive_window_size = size;
     }
-    
+
     /// Sets the FEC encoding window size.
     ///
     /// The default value is `DEFAULT_FEC_SEND_WINDOW_SIZE`.
@@ -1450,7 +1484,8 @@ impl Config {
 
     /// decides whether FEC should be sent to protect data
     /// In order for redundancy to be actually sent, it also needs
-    /// a FEC scheduler algorithm different than FECSchedulerAlgorithm::NoRedundancy.
+    /// a FEC scheduler algorithm different than
+    /// FECSchedulerAlgorithm::NoRedundancy.
     pub fn send_fec(&mut self, v: bool) {
         self.emit_fec = v;
     }
@@ -1459,8 +1494,9 @@ impl Config {
     pub fn receive_fec(&mut self, v: bool) {
         self.receive_fec = v;
     }
-    
-    /// if set, consider the connection as a connection transporting real-time media
+
+    /// if set, consider the connection as a connection transporting real-time
+    /// media
     pub fn set_real_time(&mut self, v: bool) {
         self.real_time = v;
     }
@@ -1672,7 +1708,8 @@ pub struct Connection {
 
     fec_encoder: networkcoding::Encoder,
     fec_decoder: networkcoding::Decoder,
-    latest_metadata_of_symbol_with_fec_protected_frames: Option<SourceSymbolMetadata>,
+    latest_metadata_of_symbol_with_fec_protected_frames:
+        Option<SourceSymbolMetadata>,
     emit_fec: bool,
     receive_fec: bool,
     fec_scheduler: Option<fec::fec_scheduler::FECScheduler>,
@@ -1681,7 +1718,6 @@ pub struct Connection {
     recovered_symbols_need_ack: ranges::RangeSet,
     // for stats purpose, keep the metadata of the recovered source symbols
     recovered_symbols_md_history: std::collections::HashMap<u64, RecoveredSymbol>,
-
 
     /// Whether to emit DATAGRAM frames in the next packet.
     emit_dgram: bool,
@@ -2152,20 +2188,35 @@ impl Connection {
             stopped_stream_remote_count: 0,
 
             max_amplification_factor: config.max_amplification_factor,
-            
-            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, config.fec_send_window_size)),
-            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(config.max_send_udp_payload_size - max_pkt_header_size - max_crypto_overhead - 21, config.fec_receive_window_size)),
 
-            fec_scheduler: Some(fec::fec_scheduler::new_fec_scheduler(config.fec_scheduler_algorithm)),
+            fec_encoder: networkcoding::Encoder::VLC(VLCEncoder::new(
+                config.max_send_udp_payload_size -
+                    max_pkt_header_size -
+                    max_crypto_overhead -
+                    21,
+                config.fec_send_window_size,
+            )),
+            fec_decoder: networkcoding::Decoder::VLC(VLCDecoder::new(
+                config.max_send_udp_payload_size -
+                    max_pkt_header_size -
+                    max_crypto_overhead -
+                    21,
+                config.fec_receive_window_size,
+            )),
+
+            fec_scheduler: Some(fec::fec_scheduler::new_fec_scheduler(
+                config.fec_scheduler_algorithm,
+            )),
             latest_metadata_of_symbol_with_fec_protected_frames: None,
             recovered_symbols_md_history: std::collections::HashMap::new(),
-
 
             emit_fec: config.emit_fec,
             receive_fec: config.receive_fec,
             fec_receive_window_size: config.fec_receive_window_size,
             _fec_send_window_size: config.fec_send_window_size,
-            recovered_symbols_need_ack: ranges::RangeSet::new(crate::MAX_ACK_RANGES),
+            recovered_symbols_need_ack: ranges::RangeSet::new(
+                crate::MAX_ACK_RANGES,
+            ),
         };
 
         if let Some(odcid) = odcid {
@@ -2519,16 +2570,25 @@ impl Connection {
         }
     }
 
-    fn process_frames_of_source_symbol(&mut self, decoded_symbol: SourceSymbol, now: Instant, epoch: packet::Epoch, hdr: &packet::Header,
-        recv_path_id: usize) -> Result<()> {
+    fn process_frames_of_source_symbol(
+        &mut self, decoded_symbol: SourceSymbol, now: Instant,
+        epoch: packet::Epoch, hdr: &packet::Header, recv_path_id: usize,
+    ) -> Result<()> {
         // TODO: ensure epoch and packet type are correct
         let data = decoded_symbol.take();
-        let mut source_symbol_payload = octets::Octets::with_slice(data.as_slice());
+        let mut source_symbol_payload =
+            octets::Octets::with_slice(data.as_slice());
         while source_symbol_payload.cap() > 0 {
-            let frame = frame::Frame::from_bytes(&mut source_symbol_payload, packet::Type::Short, &self.fec_decoder)?;
-            // FIXME: we currently give the current active path to process_frame, but the frame has been recovered through FEC
+            let frame = frame::Frame::from_bytes(
+                &mut source_symbol_payload,
+                packet::Type::Short,
+                &self.fec_decoder,
+            )?;
+            // FIXME: we currently give the current active path to process_frame,
+            // but the frame has been recovered through FEC
             self.process_frame(frame, hdr, recv_path_id, epoch, now)?;
-            // TODO: log the decoded source symbol & announce its recovery to the sender
+            // TODO: log the decoded source symbol & announce its recovery to
+            // the sender
         }
         Ok(())
     }
@@ -3041,15 +3101,22 @@ impl Connection {
         let mut probing = true;
 
         let mut source_symbol_data = Vec::with_capacity(1500);
-        
+
         // Process packet payload.
         while payload.cap() > 0 {
             let offset_before_frame_processing = payload.off();
-            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &self.fec_decoder)?;
+            let frame = frame::Frame::from_bytes(
+                &mut payload,
+                hdr.ty,
+                &self.fec_decoder,
+            )?;
             let offset_after_frame_processing = payload.off();
 
             if self.receive_fec {
-                source_symbol_data.extend_from_slice(&payload.buf()[offset_before_frame_processing..offset_after_frame_processing]);
+                source_symbol_data.extend_from_slice(
+                    &payload.buf()[offset_before_frame_processing..
+                        offset_after_frame_processing],
+                );
             }
 
             qlog_with_type!(QLOG_PACKET_RX, self.qlog, _q, {
@@ -3251,7 +3318,7 @@ impl Connection {
                         if self.emit_fec {
                             self.fec_encoder.symbol_landed(metadata);
                         }
-                    }
+                    },
 
                     _ => (),
                 }
@@ -3669,7 +3736,7 @@ impl Connection {
 
     fn send_single(
         &mut self, out: &mut [u8], send_pid: usize, has_initial: bool,
-        now: time::Instant,
+        _now: time::Instant,
     ) -> Result<(packet::Type, usize)> {
         let now = time::Instant::now();
 
@@ -3706,7 +3773,10 @@ impl Connection {
                     recovery::LostFrame::Lost(frame) => {
                         match frame {
                             frame::Frame::CryptoHeader { offset, length } => {
-                                pkt_space.crypto_stream.send.retransmit(offset, length);
+                                pkt_space
+                                    .crypto_stream
+                                    .send
+                                    .retransmit(offset, length);
 
                                 self.stream_retrans_bytes += length as u64;
                                 p.stream_retrans_bytes += length as u64;
@@ -3721,7 +3791,8 @@ impl Connection {
                                 length,
                                 fin,
                             } => {
-                                let stream = match self.streams.get_mut(stream_id) {
+                                let stream = match self.streams.get_mut(stream_id)
+                                {
                                     Some(v) => v,
 
                                     None => continue,
@@ -3738,11 +3809,13 @@ impl Connection {
                                 // queued.
                                 //
                                 // Consider the stream flushable also when we are
-                                // sending a zero-length frame that has the fin flag
-                                // set.
-                                if (stream.is_flushable() || empty_fin) && !was_flushable
+                                // sending a zero-length frame that has the fin
+                                // flag set.
+                                if (stream.is_flushable() || empty_fin) &&
+                                    !was_flushable
                                 {
-                                    let priority_key = Arc::clone(&stream.priority_key);
+                                    let priority_key =
+                                        Arc::clone(&stream.priority_key);
                                     self.streams.insert_flushable(&priority_key);
                                 }
 
@@ -3763,65 +3836,71 @@ impl Connection {
                                 final_size,
                             } =>
                                 if self.streams.get(stream_id).is_some() {
-                                    self.streams
-                                        .insert_reset(stream_id, error_code, final_size);
+                                    self.streams.insert_reset(
+                                        stream_id, error_code, final_size,
+                                    );
                                 },
 
-                            // Retransmit HANDSHAKE_DONE only if it hasn't been acked at
-                            // least once already.
-                            frame::Frame::HandshakeDone if !self.handshake_done_acked => {
+                            // Retransmit HANDSHAKE_DONE only if it hasn't been
+                            // acked at least once
+                            // already.
+                            frame::Frame::HandshakeDone
+                                if !self.handshake_done_acked =>
+                            {
                                 self.handshake_done_sent = false;
                             },
 
-                            frame::Frame::MaxStreamData { stream_id, .. } => {
+                            frame::Frame::MaxStreamData { stream_id, .. } =>
                                 if self.streams.get(stream_id).is_some() {
                                     self.streams.insert_almost_full(stream_id);
-                                }
-                            },
+                                },
 
                             frame::Frame::MaxData { .. } => {
                                 self.almost_full = true;
                             },
-        
+
                             frame::Frame::NewConnectionId { seq_num, .. } => {
-                                self.ids.mark_advertise_new_scid_seq(seq_num, true);
+                                self.ids
+                                    .mark_advertise_new_scid_seq(seq_num, true);
                             },
-        
+
                             frame::Frame::RetireConnectionId { seq_num } => {
-                                self.ids.mark_retire_dcid_seq(seq_num, true);
+                                self.ids.mark_retire_dcid_seq(seq_num, true)?;
                             },
 
                             frame::Frame::Repair { .. } => {
                                 if let Some(scheduler) = &mut self.fec_scheduler {
-                                    scheduler.lost_repair_symbol(&self.fec_encoder);
+                                    scheduler
+                                        .lost_repair_symbol(&self.fec_encoder);
                                 }
                             },
 
-                            frame::Frame::SourceSymbolHeader { metadata, .. } => {
+                            frame::Frame::SourceSymbolHeader {
+                                metadata, ..
+                            } => {
                                 self.fec_encoder.symbol_landed(metadata);
-                            }
-        
-                            frame::Frame::Ping { mtu_probe } if mtu_probe.is_some() => {
+                            },
+
+                            frame::Frame::Ping { mtu_probe }
+                                if mtu_probe.is_some() =>
+                            {
                                 p.pmtud.pmtu_probe_lost();
                             },
                             _ => (),
                         }
-                    }
-                    recovery::LostFrame::LostAndRecovered(frame) => {
-                        match frame {
-                            frame::Frame::Repair { .. } => {
-                                if let Some(scheduler) = &mut self.fec_scheduler {
-                                    scheduler.lost_repair_symbol(&self.fec_encoder);
-                                }
+                    },
+                    recovery::LostFrame::LostAndRecovered(frame) => match frame {
+                        frame::Frame::Repair { .. } => {
+                            if let Some(scheduler) = &mut self.fec_scheduler {
+                                scheduler.lost_repair_symbol(&self.fec_encoder);
                             }
-                            frame::Frame::SourceSymbolHeader { metadata, .. } => {
-                                self.fec_encoder.symbol_landed(metadata);
-                            }
-                            _ => (),
-                        }
+                        },
+                        frame::Frame::SourceSymbolHeader { metadata, .. } => {
+                            self.fec_encoder.symbol_landed(metadata);
+                        },
+                        _ => (),
                     },
                 }
-                
             }
         }
 
@@ -3839,8 +3918,6 @@ impl Connection {
         } else {
             b.cap()
         };
-
-        let space_reduction_due_to_cwnd = b.cap() - left;
 
         let pn = pkt_space.next_pkt_num;
         let largest_acked_pkt =
@@ -4021,7 +4098,6 @@ impl Connection {
             cwnd_available.saturating_sub(left_before_packing_ack_frame - left),
         );
 
-
         let space_reduction_due_to_cwnd = left_before_reduction_by_cwnd - left;
 
         let mut challenge_data = None;
@@ -4138,15 +4214,15 @@ impl Connection {
         let path = self.paths.get_mut(send_pid)?;
 
         if pkt_type == packet::Type::Short && !is_closing {
-
             // create SOURCE_SYMBOL_ACK frame
             if self.recovered_symbols_need_ack.len() > 0 {
                 let frame = frame::Frame::SourceSymbolACK {
                     ranges: self.recovered_symbols_need_ack.clone(),
                 };
-    
+
                 if push_frame_to_pkt!(b, frames, frame, left) {
-                    self.recovered_symbols_need_ack = ranges::RangeSet::new(crate::MAX_ACK_RANGES);
+                    self.recovered_symbols_need_ack =
+                        ranges::RangeSet::new(crate::MAX_ACK_RANGES);
                 }
             }
 
@@ -4490,35 +4566,52 @@ impl Connection {
             do_dgram = true;
         }
 
-
-        let max_fec_overhead = 32 + frame::Frame::SourceSymbolHeader{metadata: self.fec_encoder.next_metadata()?, recovered: false}.wire_len();
-        let should_protect_packet = self.emit_fec 
-                                    && !is_closing 
-                                    && path.active() 
-                                    && pkt_type == packet::Type::Short
-                                    && ((left > max_fec_overhead + 1 + frame::MAX_DGRAM_OVERHEAD + self.dgram_send_queue.peek_front_len().unwrap_or(left + 1) && do_dgram) // enough space to write a datagram frame and its content
+        let max_fec_overhead = 32 +
+            frame::Frame::SourceSymbolHeader {
+                metadata: self.fec_encoder.next_metadata()?,
+                recovered: false,
+            }
+            .wire_len();
+        let should_protect_packet = self.emit_fec &&
+            !is_closing &&
+            path.active() &&
+            pkt_type == packet::Type::Short &&
+            ((left > max_fec_overhead + 1 + frame::MAX_DGRAM_OVERHEAD + self.dgram_send_queue.peek_front_len().unwrap_or(left + 1) && do_dgram) // enough space to write a datagram frame and its content
                                         || (left > max_fec_overhead + 1 + frame::MAX_STREAM_OVERHEAD && stream_to_emit)); // enough space to write a stream frame
 
-
         if should_protect_packet {
-            left -= std::cmp::min(32usize.saturating_sub(space_reduction_due_to_cwnd), left);
+            left -= std::cmp::min(
+                32usize.saturating_sub(space_reduction_due_to_cwnd),
+                left,
+            );
         }
 
-        
         // Create REPAIR frame.
-        if self.emit_fec && pkt_type == packet::Type::Short
-            && self.should_send_repair_symbol(send_pid)?
-            && self.fec_encoder.can_send_repair_symbols() {
-            if let Some(md) = self.latest_metadata_of_symbol_with_fec_protected_frames {
-                if left >= octets::varint_len(0x32) + self.fec_encoder.next_repair_symbol_size(md)? {
-                    match self.fec_encoder.generate_and_serialize_repair_symbol_up_to(md) {
+        if self.emit_fec &&
+            pkt_type == packet::Type::Short &&
+            self.should_send_repair_symbol(send_pid)? &&
+            self.fec_encoder.can_send_repair_symbols()
+        {
+            if let Some(md) =
+                self.latest_metadata_of_symbol_with_fec_protected_frames
+            {
+                if left >=
+                    octets::varint_len(0x32) +
+                        self.fec_encoder.next_repair_symbol_size(md)?
+                {
+                    match self
+                        .fec_encoder
+                        .generate_and_serialize_repair_symbol_up_to(md)
+                    {
                         Ok(rs) => {
-                            let frame = frame::Frame::Repair {
-                                repair_symbol: rs,
-                            };
+                            let frame =
+                                frame::Frame::Repair { repair_symbol: rs };
                             if push_frame_to_pkt!(b, frames, frame, left) {
                                 in_flight = true;
-                                self.fec_scheduler.as_mut().unwrap().sent_repair_symbol(&self.fec_encoder);
+                                self.fec_scheduler
+                                    .as_mut()
+                                    .unwrap()
+                                    .sent_repair_symbol(&self.fec_encoder);
                                 ack_eliciting = true;
                                 self.repair_symbols_sent_count += 1;
                             } else {
@@ -4529,11 +4622,11 @@ impl Connection {
                                 trace!("packet REPAIR frame protecting symbols [{}, {}]",
                                         source_symbol_metadata_to_u64(first_md), source_symbol_metadata_to_u64(md));
                             }
-                        }
-                        Err(EncoderError::NoSymbolToGenerate) => (),    // because generate_up_to may not be able to generate even if can_generate returned true
+                        },
+                        Err(EncoderError::NoSymbolToGenerate) => (), /* because generate_up_to may not be able to generate even if can_generate returned true */
                         Err(err) => {
                             return Err(Error::from(err));
-                        }
+                        },
                     }
                 }
             }
@@ -4544,8 +4637,16 @@ impl Connection {
         let pkt_space = &mut self.pkt_num_spaces[epoch];
 
         if should_protect_packet {
-            left = std::cmp::min(left, self.fec_encoder.symbol_size().saturating_sub(b.off() - payload_offset));
-            let frame = frame::Frame::SourceSymbolHeader { metadata: self.fec_encoder.next_metadata()?, recovered: false };
+            left = std::cmp::min(
+                left,
+                self.fec_encoder
+                    .symbol_size()
+                    .saturating_sub(b.off() - payload_offset),
+            );
+            let frame = frame::Frame::SourceSymbolHeader {
+                metadata: self.fec_encoder.next_metadata()?,
+                recovered: false,
+            };
             if frame.wire_len() < left {
                 if push_frame_to_pkt!(b, frames, frame, left) {
                     in_flight = true;
@@ -4852,35 +4953,42 @@ impl Connection {
             });
         }
 
-
         // FIXME: to avoid inserting FEC inside quiche's code too much,
         //        we simply rewrite the frames into the FEC buffer, although
         //        we could have copied it in push_frame_to_pkt!() directly
 
         if fec_protected {
             let symbol_size = self.fec_encoder.symbol_size();
-            // zeroes at the beginning to add PADDING frames at the front of the symbol (they are not sent in the packet)
+            // zeroes at the beginning to add PADDING frames at the front of the
+            // symbol (they are not sent in the packet)
             let mut source_symbol_data = vec![0; symbol_size];
-            let mut fec_buffer = octets::OctetsMut::with_slice(&mut source_symbol_data);
+            let mut fec_buffer =
+                octets::OctetsMut::with_slice(&mut source_symbol_data);
 
+            // We here re-read the written payload to include it inside the source
+            // symbol We cannot browse through the frames vector as
+            // Stream frames are not completely stored in it but a
+            // StreamHeader is stored instead...
 
-            // We here re-read the written payload to include it inside the source symbol
-            // We cannot browse through the frames vector as Stream frames are not completely
-            // stored in it but a StreamHeader is stored instead...
-
-            // This is the best way I found to avoid modifying too much the packetization code
-            // of the stream frames
-            let unprotected_frames_data_len = source_symbol_offset - payload_offset;
+            // This is the best way I found to avoid modifying too much the
+            // packetization code of the stream frames
+            let unprotected_frames_data_len =
+                source_symbol_offset - payload_offset;
             let source_symbol_len = payload_len - unprotected_frames_data_len;
-            let protected_data_buf = &b.buf()[source_symbol_offset..source_symbol_offset + source_symbol_len];
-            let mut written_frames = octets::Octets::with_slice(protected_data_buf);
+            let protected_data_buf = &b.buf()
+                [source_symbol_offset..source_symbol_offset + source_symbol_len];
+            let mut written_frames =
+                octets::Octets::with_slice(protected_data_buf);
 
             let mut packet_fec_protected = false;
 
-
             while written_frames.cap() > 0 {
                 let off_before_parsing = written_frames.off();
-                let frame = frame::Frame::from_bytes(&mut written_frames, hdr_ty, &self.fec_decoder)?;
+                let frame = frame::Frame::from_bytes(
+                    &mut written_frames,
+                    hdr_ty,
+                    &self.fec_decoder,
+                )?;
                 let wire_len = written_frames.off() - off_before_parsing;
                 packet_fec_protected = true;
                 let written = frame.to_bytes(&mut fec_buffer)?;
@@ -4891,13 +4999,16 @@ impl Connection {
             }
 
             let offset = fec_buffer.off();
-            // put the padding in front of the symbol to not mess with stream frames without len
+            // put the padding in front of the symbol to not mess with stream
+            // frames without len
             source_symbol_data.rotate_right(symbol_size - offset);
             let mut source_symbol_metadata = source_symbol_metadata_from_u64(0);
-            self.fec_encoder.protect_data(source_symbol_data, &mut source_symbol_metadata)?;
+            self.fec_encoder
+                .protect_data(source_symbol_data, &mut source_symbol_metadata)?;
 
             if packet_fec_protected {
-                self.latest_metadata_of_symbol_with_fec_protected_frames = Some(source_symbol_metadata);
+                self.latest_metadata_of_symbol_with_fec_protected_frames =
+                    Some(source_symbol_metadata);
             }
         }
 
@@ -5043,12 +5154,14 @@ impl Connection {
     ///
     /// This represents the maximum size of a packet burst as determined by the
     /// congestion control algorithm in use.
-    ///
-    pub fn set_send_quantum_on_path(&mut self, local_addr: SocketAddr, peer_addr: SocketAddr, v: usize) -> Result<()> {
+    pub fn set_send_quantum_on_path(
+        &mut self, local_addr: SocketAddr, peer_addr: SocketAddr, v: usize,
+    ) -> Result<()> {
         self.paths
-                    .path_id_from_addrs(&(local_addr, peer_addr))
-                    .and_then(|pid| self.paths.get_mut(pid).ok())
-                    .map(|path| path.recovery.set_send_quantum(v)).ok_or(Error::InvalidState)
+            .path_id_from_addrs(&(local_addr, peer_addr))
+            .and_then(|pid| self.paths.get_mut(pid).ok())
+            .map(|path| path.recovery.set_send_quantum(v))
+            .ok_or(Error::InvalidState)
     }
 
     /// Returns the size of the send quantum, in bytes.
@@ -6209,7 +6322,12 @@ impl Connection {
                 Some(s) => s.timeout(),
             };
 
-            let timers = [self.idle_timer, path_timer, key_update_timer, fec_scheduler_timer];
+            let timers = [
+                self.idle_timer,
+                path_timer,
+                key_update_timer,
+                fec_scheduler_timer,
+            ];
 
             timers.iter().filter_map(|&x| x).min()
         }
@@ -7066,7 +7184,11 @@ impl Connection {
 
     fn should_send_repair_symbol(&mut self, pid: usize) -> Result<bool> {
         let mut fec_scheduler = self.fec_scheduler.take().unwrap();
-        let should_send_repair = fec_scheduler.should_send_repair(self, self.paths.get(pid)?, self.fec_encoder.symbol_size());
+        let should_send_repair = fec_scheduler.should_send_repair(
+            self,
+            self.paths.get(pid)?,
+            self.fec_encoder.symbol_size(),
+        );
         self.fec_scheduler = Some(fec_scheduler);
         Ok(should_send_repair)
     }
@@ -7290,7 +7412,8 @@ impl Connection {
                 send_path.pmtud.get_probe_status() ||
                 send_path.needs_ack_eliciting ||
                 send_path.probing_required() ||
-                (self.emit_fec && self.should_send_repair_symbol(send_pid)?))
+                (self.emit_fec &&
+                    self.should_send_repair_symbol(send_pid)?))
         {
             // Only clients can send 0-RTT packets.
             if !self.is_server && self.is_in_early_data() {
@@ -7372,7 +7495,6 @@ impl Connection {
                 if self.handshake_confirmed {
                     self.drop_epoch_state(packet::Epoch::Handshake, now);
                 }
-
             },
 
             frame::Frame::ResetStream {
@@ -7805,56 +7927,102 @@ impl Connection {
             },
 
             frame::Frame::Repair { repair_symbol } => {
-                trace!("received repair symbol, current window bounds are {:?}", self.fec_decoder.bounds());
+                trace!(
+                    "received repair symbol, current window bounds are {:?}",
+                    self.fec_decoder.bounds()
+                );
                 self.repair_symbols_received_count += 1;
                 if self.receive_fec {
-                    match self.fec_decoder.receive_and_deserialize_repair_symbol(repair_symbol) {
-                        Err(networkcoding::DecoderError::UnusedRepairSymbol) => (),
+                    match self
+                        .fec_decoder
+                        .receive_and_deserialize_repair_symbol(repair_symbol)
+                    {
+                        Err(networkcoding::DecoderError::UnusedRepairSymbol) =>
+                            (),
                         Err(err) => return Err(Error::from(err)),
                         Ok((_, decoded_symbols)) => {
                             for decoded_symbol in decoded_symbols {
                                 self.recov_count += 1;
-                                let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                                let mdu64 = source_symbol_metadata_to_u64(
+                                    decoded_symbol.metadata(),
+                                );
                                 trace!("process decoded symbol {}", mdu64);
-                                self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                                self.process_frames_of_source_symbol(
+                                    decoded_symbol,
+                                    now,
+                                    epoch,
+                                    hdr,
+                                    recv_path_id,
+                                )?;
                                 self.recovered_symbols_need_ack.push_item(mdu64);
-                                self.recovered_symbols_md_history.insert(mdu64, RecoveredSymbol { recovered_time: now, received_time: None });
+                                self.recovered_symbols_md_history.insert(
+                                    mdu64,
+                                    RecoveredSymbol {
+                                        recovered_time: now,
+                                        received_time: None,
+                                    },
+                                );
                             }
-                        }
+                        },
                     }
                 }
             },
 
-
-            frame::Frame::SourceSymbol { source_symbol } => {
+            frame::Frame::SourceSymbol { source_symbol } =>
                 if self.receive_fec {
-                    let id = source_symbol_metadata_to_u64(source_symbol.metadata());
+                    let id =
+                        source_symbol_metadata_to_u64(source_symbol.metadata());
                     if self.fec_receive_window_size as u64 <= id {
                         let path = self.paths.get_active()?;
-                        self.fec_decoder.remove_up_to(source_symbol_metadata_from_u64(id - self.fec_receive_window_size as u64), Some(now - path.recovery.pto()));
+                        self.fec_decoder.remove_up_to(
+                            source_symbol_metadata_from_u64(
+                                id - self.fec_receive_window_size as u64,
+                            ),
+                            Some(now - path.recovery.pto()),
+                        );
                     }
 
-                    match self.fec_decoder.receive_source_symbol(source_symbol, now) {
+                    match self
+                        .fec_decoder
+                        .receive_source_symbol(source_symbol, now)
+                    {
                         Err(DecoderError::UnusedSourceSymbol) => {
-                            info!("received a source symbol unused by the decoder");
+                            info!(
+                                "received a source symbol unused by the decoder"
+                            );
                         },
                         Err(err) => return Err(Error::from(err)),
                         Ok(decoded_symbols) => {
                             for decoded_symbol in decoded_symbols {
                                 self.recov_count += 1;
-                                let mdu64 = source_symbol_metadata_to_u64(decoded_symbol.metadata());
+                                let mdu64 = source_symbol_metadata_to_u64(
+                                    decoded_symbol.metadata(),
+                                );
                                 trace!("process decoded symbol {}", mdu64);
-                                self.process_frames_of_source_symbol(decoded_symbol, now, epoch, hdr, recv_path_id)?;
+                                self.process_frames_of_source_symbol(
+                                    decoded_symbol,
+                                    now,
+                                    epoch,
+                                    hdr,
+                                    recv_path_id,
+                                )?;
                                 self.recovered_symbols_need_ack.push_item(mdu64);
-                                self.recovered_symbols_md_history.insert(mdu64, RecoveredSymbol { recovered_time: now, received_time: None });
+                                self.recovered_symbols_md_history.insert(
+                                    mdu64,
+                                    RecoveredSymbol {
+                                        recovered_time: now,
+                                        received_time: None,
+                                    },
+                                );
                             }
-                        }
+                        },
                     }
-                    if let Some(recovered_symbol) = self.recovered_symbols_md_history.get_mut(&id) {
+                    if let Some(recovered_symbol) =
+                        self.recovered_symbols_md_history.get_mut(&id)
+                    {
                         recovered_symbol.received_time = Some(now);
                     }
-                }
-            },
+                },
 
             frame::Frame::SourceSymbolACK { ranges } => {
                 for (_, p) in self.paths.iter_mut() {
@@ -7864,7 +8032,7 @@ impl Connection {
                         &self.trace_id,
                     );
                 }
-            }
+            },
 
             frame::Frame::SourceSymbolHeader { .. } => unreachable!(),
             frame::Frame::DatagramHeader { .. } => unreachable!(),
@@ -8400,7 +8568,7 @@ pub struct Stats {
     /// The number of source symbols recovered using FEC
     pub recov: usize,
 
-    /// The both recovered and received symbols 
+    /// The both recovered and received symbols
     pub recovered_and_received: std::collections::HashMap<u64, RecoveredSymbol>,
 
     /// The number of repair symbols sent
@@ -9383,7 +9551,11 @@ pub mod testing {
         let mut frames = Vec::new();
 
         while payload.cap() > 0 {
-            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty, &conn.fec_decoder)?;
+            let frame = frame::Frame::from_bytes(
+                &mut payload,
+                hdr.ty,
+                &conn.fec_decoder,
+            )?;
             frames.push(frame);
         }
 
@@ -16083,7 +16255,6 @@ mod tests {
         assert_eq!(pipe.client.retired_scid_next(), Some(scid));
         assert_eq!(pipe.client.retired_scid_next(), None);
     }
-    
 
     #[test]
     fn sending_duplicate_scids() {
@@ -17817,15 +17988,17 @@ pub use crate::path::PathEvent;
 pub use crate::path::PathStats;
 pub use crate::path::SocketAddrIter;
 
-pub use crate::recovery::congestion::CongestionControlAlgorithm;
 pub use crate::fec::fec_scheduler::FECSchedulerAlgorithm;
+pub use crate::recovery::congestion::CongestionControlAlgorithm;
 
 pub use crate::stream::StreamIter;
-use crate::Error::{BufferTooShort, SourceSymbolCreationError};
+use crate::Error::BufferTooShort;
+use crate::Error::SourceSymbolCreationError;
 
 mod cid;
 mod crypto;
 mod dgram;
+mod fec;
 #[cfg(feature = "ffi")]
 mod ffi;
 mod flowcontrol;
@@ -17840,4 +18013,3 @@ mod ranges;
 mod recovery;
 mod stream;
 mod tls;
-mod fec;

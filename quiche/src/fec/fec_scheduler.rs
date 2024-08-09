@@ -2,14 +2,13 @@ use core::str::FromStr;
 
 use networkcoding::Encoder;
 
-use crate::Connection;
+use crate::fec::background_fec_scheduler::BackgroundFECScheduler;
+use crate::fec::burst_protecting_fec_scheduler::BurstsFECScheduler;
 use crate::fec::fec_scheduler::FECScheduler::BackgroundOnly;
 use crate::fec::fec_scheduler::FECScheduler::Bursty;
 use crate::fec::fec_scheduler::FECScheduler::NoRedundancy;
-use crate::fec::background_fec_scheduler::BackgroundFECScheduler;
-use crate::fec::burst_protecting_fec_scheduler::BurstsFECScheduler;
 use crate::path::Path;
-
+use crate::Connection;
 
 /// Available FEC redundancy schedulers.
 ///
@@ -19,11 +18,12 @@ use crate::path::Path;
 pub enum FECSchedulerAlgorithm {
     /// Never sends redundancy (default). `noredundancy` in a string form.
     NoRedundancy   = 0,
-    /// Only sends redundancy when there is no user data to send. `background` in a string form.
-    BackgroundOnly  = 1,
+    /// Only sends redundancy when there is no user data to send. `background`
+    /// in a string form.
+    BackgroundOnly = 1,
     /// Sends redundancy only when there is no user data to send and
     /// when a burst of packets has been sent. `bursts` in a string form.
-    BurstsOnly = 2,
+    BurstsOnly     = 2,
 }
 
 impl FromStr for FECSchedulerAlgorithm {
@@ -42,7 +42,6 @@ impl FromStr for FECSchedulerAlgorithm {
         }
     }
 }
-
 
 pub(crate) enum FECScheduler {
     NoRedundancy,
@@ -67,11 +66,14 @@ fn new_bursts_only_scheduler() -> FECScheduler {
 }
 
 impl FECScheduler {
-
-    pub fn should_send_repair(&mut self, conn: &Connection, path: &Path, symbol_size: usize) -> bool {
+    pub fn should_send_repair(
+        &mut self, conn: &Connection, path: &Path, symbol_size: usize,
+    ) -> bool {
         match self {
-            BackgroundOnly(scheduler) => scheduler.should_send_repair(conn, path, symbol_size),
-            Bursty(scheduler) => scheduler.should_send_repair(conn, path, symbol_size),
+            BackgroundOnly(scheduler) =>
+                scheduler.should_send_repair(conn, path, symbol_size),
+            Bursty(scheduler) =>
+                scheduler.should_send_repair(conn, path, symbol_size),
             NoRedundancy => false,
         }
     }
@@ -92,7 +94,6 @@ impl FECScheduler {
         }
     }
 
-
     pub fn sent_source_symbol(&mut self, encoder: &Encoder) {
         match self {
             BackgroundOnly(scheduler) => scheduler.sent_source_symbol(encoder),
@@ -109,7 +110,8 @@ impl FECScheduler {
         }
     }
 
-    // returns an Instant at which the stack should wake up to sent new repair symbols
+    // returns an Instant at which the stack should wake up to sent new repair
+    // symbols
     pub fn timeout(&self) -> Option<std::time::Instant> {
         match self {
             BackgroundOnly(scheduler) => scheduler.timeout(),

@@ -1,18 +1,20 @@
-use networkcoding::{Encoder, SourceSymbolMetadata};
+use networkcoding::Encoder;
+use networkcoding::SourceSymbolMetadata;
 
-use crate::Connection;
 use crate::path::Path;
+use crate::Connection;
 use std::env;
 
 #[derive(Debug, Clone, Copy)]
 struct SendingState {
-    start_time: std::time::Instant,
+    _start_time: std::time::Instant,
     when: std::time::Instant,
-    burst_start_offset: usize,
-    burst_size: usize,
+    _burst_start_offset: usize,
+    _burst_size: usize,
     last_metadata_when_triggered: SourceSymbolMetadata,
     repair_bytes_to_send: usize,
-    repair_symbols_sent: usize, // number of repair symbols sent during this state
+    repair_symbols_sent: usize, /* number of repair symbols sent during this
+                                 * state */
 }
 pub(crate) struct BurstsFECScheduler {
     n_repair_in_flight: u64,
@@ -34,7 +36,7 @@ const DEFAULT_STDDEV_FACTOR: f64 = 2.0;
 
 impl BurstsFECScheduler {
     pub fn new() -> BurstsFECScheduler {
-        BurstsFECScheduler{
+        BurstsFECScheduler {
             n_repair_in_flight: 0,
             n_packets_sent_when_nothing_to_send: 0,
             n_sent_stream_bytes_sent_when_nothing_to_send: 0,
@@ -47,15 +49,35 @@ impl BurstsFECScheduler {
         }
     }
 
-    pub fn should_send_repair(&mut self, conn: &Connection, path: &Path, symbol_size: usize) -> bool {
+    pub fn should_send_repair(
+        &mut self, conn: &Connection, path: &Path, symbol_size: usize,
+    ) -> bool {
         let now = std::time::Instant::now();
-        // this variable can be overriden by the DEBUG_QUICHE_FEC_BURST_SIZE_BYTES environment variable for debug purposes
-        let threshold_burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
-        let max_jitter_us: u64 = env::var("DEBUG_QUICHE_FEC_MAX_JITTER_US").unwrap_or(DEFAULT_MAX_JITTER_US.to_string()).parse().unwrap_or(DEFAULT_MAX_JITTER_US);
+        // this variable can be overriden by the DEBUG_QUICHE_FEC_BURST_SIZE_BYTES
+        // environment variable for debug purposes
+        let threshold_burst_size: usize =
+            env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES")
+                .unwrap_or(DEFAULT_BURST_SIZE.to_string())
+                .parse()
+                .unwrap_or(DEFAULT_BURST_SIZE);
+        let max_jitter_us: u64 = env::var("DEBUG_QUICHE_FEC_MAX_JITTER_US")
+            .unwrap_or(DEFAULT_MAX_JITTER_US.to_string())
+            .parse()
+            .unwrap_or(DEFAULT_MAX_JITTER_US);
         let max_jitter = std::time::Duration::from_micros(max_jitter_us);
-        let fec_frac_denominator_to_protect: usize = env::var("DEBUG_QUICHE_DEFAULT_FRAC_DENOMINATOR_TO_PROTECT").unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT.to_string()).parse().unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT);
-        let minimum_room_in_cwin = env::var("DEBUG_QUICHE_MINIMUM_ROOM_IN_CWIN").unwrap_or(DEFAULT_MINIMUM_ROOM_IN_CWIN.to_string()).parse().unwrap_or(DEFAULT_MINIMUM_ROOM_IN_CWIN);
-        let stddev_factor = env::var("DEBUG_QUICHE_STDDEV_FACTOR").unwrap_or(DEFAULT_STDDEV_FACTOR.to_string()).parse().unwrap_or(DEFAULT_STDDEV_FACTOR);
+        let fec_frac_denominator_to_protect: usize =
+            env::var("DEBUG_QUICHE_DEFAULT_FRAC_DENOMINATOR_TO_PROTECT")
+                .unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT.to_string())
+                .parse()
+                .unwrap_or(DEFAULT_FRAC_DENOMINATOR_TO_PROTECT);
+        let minimum_room_in_cwin = env::var("DEBUG_QUICHE_MINIMUM_ROOM_IN_CWIN")
+            .unwrap_or(DEFAULT_MINIMUM_ROOM_IN_CWIN.to_string())
+            .parse()
+            .unwrap_or(DEFAULT_MINIMUM_ROOM_IN_CWIN);
+        let stddev_factor = env::var("DEBUG_QUICHE_STDDEV_FACTOR")
+            .unwrap_or(DEFAULT_STDDEV_FACTOR.to_string())
+            .parse()
+            .unwrap_or(DEFAULT_STDDEV_FACTOR);
 
         let dgrams_to_emit = conn.dgram_max_writable_len().is_some();
         let stream_to_emit = conn.streams.has_flushable();
@@ -67,11 +89,15 @@ impl BurstsFECScheduler {
         let nothing_to_send = !dgrams_to_emit && !stream_to_emit;
         let current_sent_count = conn.sent_count;
         let current_sent_stream_bytes = conn.tx_data as usize;
-        self.current_burst_size = current_sent_stream_bytes - self.n_sent_stream_bytes_sent_when_nothing_to_send;
-        let sent_enough_protected_data = self.current_burst_size > threshold_burst_size;
+        self.current_burst_size = current_sent_stream_bytes -
+            self.n_sent_stream_bytes_sent_when_nothing_to_send;
+        let sent_enough_protected_data =
+            self.current_burst_size > threshold_burst_size;
 
         if let Some(state) = self.state_sending_repair {
-            if state.repair_symbols_sent*symbol_size >= state.repair_bytes_to_send {
+            if state.repair_symbols_sent * symbol_size >=
+                state.repair_bytes_to_send
+            {
                 // finished this sending round
                 trace!("clear finished sending round");
                 self.state_sending_repair = None;
@@ -89,21 +115,31 @@ impl BurstsFECScheduler {
                 cwin_available, minimum_room_in_cwin, self.earliest_unprotected_source_symbol_sent_time.map(|t| t.elapsed()), max_jitter,
                 path.recovery.packets_lost_per_round_trip(), path.recovery.var_packets_lost_per_round_trip()
             );
-        
-        self.state_sending_repair = if conn.fec_encoder.last_metadata().is_some() && self.state_sending_repair.is_none() && nothing_to_send && sent_enough_protected_data {
-            Some(SendingState{
-                start_time: now,
+
+        self.state_sending_repair = if conn.fec_encoder.last_metadata().is_some() &&
+            self.state_sending_repair.is_none() &&
+            nothing_to_send &&
+            sent_enough_protected_data
+        {
+            Some(SendingState {
+                _start_time: now,
                 when: now + max_jitter,
-                last_metadata_when_triggered: conn.fec_encoder.last_metadata().unwrap(),
-                burst_start_offset: current_sent_stream_bytes,
-                burst_size: self.current_burst_size,
-                repair_bytes_to_send: 0,    // start with 0 and update afterwards
+                last_metadata_when_triggered: conn
+                    .fec_encoder
+                    .last_metadata()
+                    .unwrap(),
+                _burst_start_offset: current_sent_stream_bytes,
+                _burst_size: self.current_burst_size,
+                repair_bytes_to_send: 0, // start with 0 and update afterwards
                 repair_symbols_sent: 0,
             })
         } else {
             // the state expires after the considered symbols have all landed
             if let Some(state) = self.state_sending_repair {
-                if !conn.fec_encoder.contains_symbol(state.last_metadata_when_triggered) {
+                if !conn
+                    .fec_encoder
+                    .contains_symbol(state.last_metadata_when_triggered)
+                {
                     None
                 } else {
                     self.state_sending_repair
@@ -116,36 +152,53 @@ impl BurstsFECScheduler {
         // increase the amount of repair symbols to send if needed
         if let Some(state) = &mut self.state_sending_repair {
             // a new burst of packets has occurred, so send repair symbols
-            let bytes_to_protect = std::cmp::min(bif, self.n_source_symbols_sent_since_last_repair*symbol_size);
+            let bytes_to_protect = std::cmp::min(
+                bif,
+                self.n_source_symbols_sent_since_last_repair * symbol_size,
+            );
             let max_repair_data = if bytes_to_protect < 15000 {
-                bytes_to_protect*3/5
+                bytes_to_protect * 3 / 5
             } else {
-                let amount_to_protect_when_no_loss_info = bytes_to_protect/fec_frac_denominator_to_protect;
+                let amount_to_protect_when_no_loss_info =
+                    bytes_to_protect / fec_frac_denominator_to_protect;
                 match path.recovery.packets_lost_per_round_trip() {
                     None => {
                         // no loss info, protect an arbitrary fraction
                         amount_to_protect_when_no_loss_info
-                    }
+                    },
                     Some(packets_lost_per_round_trip) => {
-                        // if we have loss estimations, send avg_lost_packets_per_roundtrip + 2 * std_dev
-                        std::cmp::min((packets_lost_per_round_trip + stddev_factor * path.recovery.var_packets_lost_per_round_trip().ceil()) as usize * symbol_size , amount_to_protect_when_no_loss_info)
-                    }
+                        // if we have loss estimations, send
+                        // avg_lost_packets_per_roundtrip + 2 * std_dev
+                        std::cmp::min(
+                            (packets_lost_per_round_trip +
+                                stddev_factor *
+                                    path.recovery
+                                        .var_packets_lost_per_round_trip()
+                                        .ceil())
+                                as usize *
+                                symbol_size,
+                            amount_to_protect_when_no_loss_info,
+                        )
+                    },
                 }
             };
-            state.repair_bytes_to_send = state.repair_bytes_to_send.max(max_repair_data);
+            state.repair_bytes_to_send =
+                state.repair_bytes_to_send.max(max_repair_data);
         }
 
         if nothing_to_send {
             self.n_packets_sent_when_nothing_to_send = conn.sent_count;
-            self.n_sent_stream_bytes_sent_when_nothing_to_send = conn.tx_data as usize;
+            self.n_sent_stream_bytes_sent_when_nothing_to_send =
+                conn.tx_data as usize;
             self.current_burst_size = 0;
         }
 
         // mark the fact that we were in burst for the next call
         let should_send = match self.state_sending_repair {
-            Some(state) => {
-                now >= state.when && (state.repair_symbols_sent * symbol_size) < state.repair_bytes_to_send
-            }
+            Some(state) =>
+                now >= state.when &&
+                    (state.repair_symbols_sent * symbol_size) <
+                        state.repair_bytes_to_send,
             None => false,
         };
         if should_send {
@@ -176,33 +229,52 @@ impl BurstsFECScheduler {
     }
 
     pub fn sent_source_symbol(&mut self, encoder: &Encoder) {
-        let threshold_burst_size: usize = env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES").unwrap_or(DEFAULT_BURST_SIZE.to_string()).parse().unwrap_or(DEFAULT_BURST_SIZE);
-        let max_jitter_us: u64 = env::var("DEBUG_QUICHE_FEC_MAX_JITTER_US").unwrap_or(DEFAULT_MAX_JITTER_US.to_string()).parse().unwrap_or(DEFAULT_MAX_JITTER_US);
+        let threshold_burst_size: usize =
+            env::var("DEBUG_QUICHE_FEC_BURST_SIZE_BYTES")
+                .unwrap_or(DEFAULT_BURST_SIZE.to_string())
+                .parse()
+                .unwrap_or(DEFAULT_BURST_SIZE);
+        let max_jitter_us: u64 = env::var("DEBUG_QUICHE_FEC_MAX_JITTER_US")
+            .unwrap_or(DEFAULT_MAX_JITTER_US.to_string())
+            .parse()
+            .unwrap_or(DEFAULT_MAX_JITTER_US);
         let max_jitter = std::time::Duration::from_micros(max_jitter_us);
         let now = std::time::Instant::now();
         match self.earliest_unprotected_source_symbol_sent_time {
-            None =>  {
-                // interesting symbols are only symbols that are part of a large enough burst size
+            None => {
+                // interesting symbols are only symbols that are part of a large
+                // enough burst size
                 if self.current_burst_size > threshold_burst_size {
                     self.earliest_unprotected_source_symbol_sent_time = Some(now);
                 }
-            }
-            Some(sent_time) => {    // check if that sent_time is still up-to-date
+            },
+            Some(sent_time) => {
+                // check if that sent_time is still up-to-date
                 if let Some(first_md) = encoder.first_metadata() {
-                    if now > sent_time + max_jitter && self.current_burst_size > threshold_burst_size {
-                        // the time of the last sent burst is expired and there is a new burst candidate to protect
-                        self.earliest_unprotected_source_symbol_sent_time = Some(now);
-                    } else if let Some(window_sent_time) = encoder.get_sent_time(first_md) {
+                    if now > sent_time + max_jitter &&
+                        self.current_burst_size > threshold_burst_size
+                    {
+                        // the time of the last sent burst is expired and there is
+                        // a new burst candidate to protect
+                        self.earliest_unprotected_source_symbol_sent_time =
+                            Some(now);
+                    } else if let Some(window_sent_time) =
+                        encoder.get_sent_time(first_md)
+                    {
                         if window_sent_time > sent_time {
-                            // if the first window symbol has a later sent time than the one we recorded,
-                            // then it is outdated and we replace if by the first symbol of the window.
-                            // This typically means that the window has moved forward without any
+                            // if the first window symbol has a later sent time
+                            // than the one we recorded,
+                            // then it is outdated and we replace if by the first
+                            // symbol of the window.
+                            // This typically means that the window has moved
+                            // forward without any
                             // repair symbol being sent
-                            self.earliest_unprotected_source_symbol_sent_time = Some(window_sent_time);
+                            self.earliest_unprotected_source_symbol_sent_time =
+                                Some(window_sent_time);
                         }
                     }
                 };
-            }
+            },
         }
         self.n_source_symbols_sent_since_last_repair += 1;
     }
@@ -211,9 +283,9 @@ impl BurstsFECScheduler {
         self.acked_repair_symbol(encoder)
     }
 
-    // returns an Instant at which the stack should wake up to sent new repair symbols
+    // returns an Instant at which the stack should wake up to sent new repair
+    // symbols
     pub fn timeout(&self) -> Option<std::time::Instant> {
         self.next_timeout
     }
-
 }

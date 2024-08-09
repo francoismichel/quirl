@@ -39,7 +39,6 @@ use crate::Result;
 
 use crate::frame;
 use crate::frame::Frame;
-use crate::minmax;
 use crate::packet;
 use crate::ranges;
 
@@ -238,14 +237,18 @@ impl RecoveryEpoch {
             {
                 let mut contains_recovered_source_symbol = false;
                 for frame in &mut unacked.frames.drain(..) {
-                    if let frame::Frame::SourceSymbolHeader { recovered, .. } = frame {
+                    if let frame::Frame::SourceSymbolHeader {
+                        recovered, ..
+                    } = frame
+                    {
                         if recovered {
                             contains_recovered_source_symbol = true;
                         }
                     }
 
                     if contains_recovered_source_symbol {
-                        self.lost_frames.push(LostFrame::LostAndRecovered(frame.clone()))
+                        self.lost_frames
+                            .push(LostFrame::LostAndRecovered(frame.clone()))
                     } else {
                         self.lost_frames.push(LostFrame::Lost(frame.clone()))
                     }
@@ -363,8 +366,6 @@ pub struct Recovery {
 
     max_datagram_size: usize,
 
-    real_time: bool,
-
     #[cfg(feature = "qlog")]
     qlog_metrics: QlogMetrics,
 
@@ -428,8 +429,6 @@ impl Recovery {
             bytes_lost: 0,
 
             max_datagram_size: recovery_config.max_send_udp_payload_size,
-
-            real_time: recovery_config.real_time,
 
             #[cfg(feature = "qlog")]
             qlog_metrics: QlogMetrics::default(),
@@ -539,18 +538,19 @@ impl Recovery {
 
     /// here, the ranges concern source symbol metadata, not packet numbers
     pub fn on_source_symbol_ack_received(
-        &mut self, ranges: &ranges::RangeSet,
-        epoch: packet::Epoch,
+        &mut self, ranges: &ranges::RangeSet, epoch: packet::Epoch,
         trace_id: &str,
     ) {
-        // Detect and mark recovered source symbols, without considering them acked or anything
+        // Detect and mark recovered source symbols, without considering them
+        // acked or anything
         for r in ranges.iter() {
             let lowest_recovered_in_block = r.start;
             let largest_recovered_in_block = r.end - 1;
 
             let epoch = &mut self.epochs[epoch];
 
-            // search in the unacked packets, the one containing source symbols that have been recovered here
+            // search in the unacked packets, the one containing source symbols
+            // that have been recovered here
             let unacked_iter = epoch.sent_packets
                 .iter_mut()
                 // Skip packets that have already been acked or lost.
@@ -558,20 +558,27 @@ impl Recovery {
 
             for unacked in unacked_iter {
                 for frame in &mut unacked.frames {
-                    if let frame::Frame::SourceSymbolHeader{
-                                                metadata,
-                                                recovered,
-                                            } = frame {
-                        let mdu64 = source_symbol_metadata_to_u64(metadata.clone());
-                        if lowest_recovered_in_block <= mdu64 && mdu64 <= largest_recovered_in_block {
+                    if let frame::Frame::SourceSymbolHeader {
+                        metadata,
+                        recovered,
+                    } = frame
+                    {
+                        let mdu64 = source_symbol_metadata_to_u64(*metadata);
+                        if lowest_recovered_in_block <= mdu64 &&
+                            mdu64 <= largest_recovered_in_block
+                        {
                             *recovered = true;
-                            trace!("{} source symbol newly recovered {} in pkt {}", trace_id, mdu64, unacked.pkt_num);
+                            trace!(
+                                "{} source symbol newly recovered {} in pkt {}",
+                                trace_id,
+                                mdu64,
+                                unacked.pkt_num
+                            );
                         }
                     }
                 }
             }
         }
-
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -714,14 +721,17 @@ impl Recovery {
         for unacked in unacked_iter {
             let mut contains_recovered_source_symbol = false;
             for frame in &unacked.frames {
-                if let frame::Frame::SourceSymbolHeader { recovered, .. } = frame {
+                if let frame::Frame::SourceSymbolHeader { recovered, .. } = frame
+                {
                     if *recovered {
                         contains_recovered_source_symbol = true;
                     }
                 }
 
                 if contains_recovered_source_symbol {
-                    epoch.lost_frames.push(LostFrame::LostAndRecovered(frame.clone()))
+                    epoch
+                        .lost_frames
+                        .push(LostFrame::LostAndRecovered(frame.clone()))
                 } else {
                     epoch.lost_frames.push(LostFrame::Lost(frame.clone()))
                 }
@@ -811,10 +821,6 @@ impl Recovery {
 
     pub fn var_packets_lost_per_round_trip(&self) -> f64 {
         self.congestion.var_lost_packets_per_epoch
-    }
-
-    pub fn max_packets_lost_per_epoch(&self) -> Option<usize> {
-        self.congestion.max_lost_packets_per_epoch
     }
 
     pub fn pto(&self) -> Duration {
@@ -968,11 +974,13 @@ impl Recovery {
             match self.congestion.current_loss_epoch_start_time {
                 None => {
                     self.congestion.current_loss_epoch_start_time = Some(now);
-                    self.congestion.current_loss_epoch_lost_packets_count = loss.lost_packets;
-                }
+                    self.congestion.current_loss_epoch_lost_packets_count =
+                        loss.lost_packets;
+                },
                 Some(_) => {
-                    self.congestion.current_loss_epoch_lost_packets_count += loss.lost_packets;
-                }
+                    self.congestion.current_loss_epoch_lost_packets_count +=
+                        loss.lost_packets;
+                },
             }
         }
 
