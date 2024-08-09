@@ -77,7 +77,7 @@ qlog = { version = "0.13", path = "../qlog", optional = true }
 sfv = { version = "0.9", optional = true }
 smallvec = { version = "1.10", features = ["serde", "union"] }
 
-networkcoding = { git = "https://github.com/francoismichel/networkcoding"}
+networkcoding = "0.1.0"
 
 [target."cfg(windows)".dependencies]
 winapi = { version = "0.3", features = ["wincrypt", "ws2def", "ws2ipdef", "ws2tcpip"] }
