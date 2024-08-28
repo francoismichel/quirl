@@ -1,3 +1,19 @@
+# QUIRL: flexible QUIC loss recovery for low latency applications
+QUIRL is a revisit of the QUIC loss recovery
+mechanism. QUIRL relies on Forward Erasure Correction (FEC)
+only if it is needed by the application’s latency requirements and
+uses classical retransmissions otherwise. We implement QUIRL
+and evaluate its performance for real-time video and HTTP/3.
+
+We implement QUIRL based on Cloudflare's [quiche] implementation.
+We provide the [networkcoding] library but the actual Tetrys implementation
+is currently private since there are IPR disclosures on Tetrys and it is not
+sure that we can release the implementation without infringing the patent.
+That makes me unhappy but I am not an owner of these patents.
+If you can help us on the matter, don't hesitate to let us know so that we
+can move forward !
+
+
 ![quiche](quiche.svg)
 
 [![crates.io](https://img.shields.io/crates/v/quiche.svg)](https://crates.io/crates/quiche)
@@ -16,6 +32,7 @@ you can read a [post] on Cloudflare's blog that goes into some more detail.
 [quiche]: https://docs.quic.tech/quiche/
 [ietf]: https://quicwg.org/
 [post]: https://blog.cloudflare.com/enjoy-a-slice-of-quic-and-rust/
+[networkcoding]: https://github.com/francoismichel/networkcoding
 
 Who uses quiche?
 ----------------
